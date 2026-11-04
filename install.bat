@@ -5,6 +5,8 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
+cd /d "%~dp0"
+
 echo.
 echo ==================================================================
 echo           WELCOME TO JARVIS AI ASSISTANT SETUP
@@ -50,14 +52,23 @@ pause
 exit /b 1
 
 :venv_done
-echo.REM Install additional audio packages
-echo [*] Installing audio packages (pyttsx3, pyaudio)...
-pip install pyttsx3
-pip install pyaudio 2>nul
+echo [*] Upgrading pip in the virtual environment...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
-    echo [!] Note: pyaudio may need manual installation on Windows
-    echo [!] If audio doesn't work, visit: https://www.lfd.uci.edu/~gohlke/pythonlibs/
-    echo [!] Download pyaudio wheel and run: pip install [filename].whl
+    echo [X] Failed to upgrade pip in the virtual environment
+    pause
+    exit /b 1
+)
+echo.
+
+echo [*] Installing required packages...
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 (
+    echo [X] Failed to install required packages from requirements.txt
+    echo [!] PyAudio may need a compatible Windows wheel if audio installation failed
+    echo [!] For help, visit: https://www.lfd.uci.edu/~gohlke/pythonlibs/
+    pause
+    exit /b 1
 )
 echo.
 
@@ -85,4 +96,4 @@ REM Start Jarvis
 echo.
 echo [*] Starting Jarvis AI Assistant...
 echo.
-python jarvis_voice.py
+".venv\Scripts\python.exe" jarvis_voice.py
