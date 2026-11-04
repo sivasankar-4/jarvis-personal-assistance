@@ -199,6 +199,10 @@ def _execute_tool_calls(tool_calls):
     return " ".join(results) if results else None
 
 
+class _ToolsUnavailableError(Exception):
+    """A model's native-tools call failed; another model may still support tools."""
+
+
 def _request_with_tools(model, messages):
     """Use native tool calls when supported, then degrade to normal chat safely."""
     if jarvis_policy.has_pending_approval():
@@ -226,13 +230,37 @@ def _request_with_tools(model, messages):
         return (message.content or "").strip()
     except Exception as tool_error:
         _safe_diagnostic(f"Native tools unavailable for {model}; using chat", tool_error)
-        response = _client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=350,
-            temperature=0.6,
-        )
-        return (response.choices[0].message.content or "").strip()
+        if _is_rate_limited(tool_error):
+            raise
+        raise _ToolsUnavailableError(str(type(tool_error).__name__)) from tool_error
+
+
+_DEGRADED_SYSTEM_NOTICE = (
+    "IMPORTANT: You are answering WITHOUT tool access for this reply only, because "
+    "the tool service is temporarily unavailable. Answer normal questions normally. "
+    "If the user asks you to DO something on the computer (open, find, create, move, "
+    "copy, rename, search, type, or similar actions), do NOT say you lack that tool "
+    "or ability. Say instead that action execution is temporarily unavailable and "
+    "ask them to try again in a moment."
+)
+
+
+def _degraded_chat_response(messages):
+    """Plain-chat answer used only after every model failed WITH tools."""
+    degraded = list(messages) + [{"role": "system", "content": _DEGRADED_SYSTEM_NOTICE}]
+    for model in MODELS:
+        try:
+            response = _client.chat.completions.create(
+                model=model, messages=degraded, max_tokens=350, temperature=0.6,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            if text:
+                return text
+        except Exception as e:
+            if _is_rate_limited(e):
+                raise
+            _safe_diagnostic(f"Degraded chat failed for {model}", e)
+    return None
 
 
 def _get_api_key():
@@ -389,6 +417,7 @@ def think(q):
     system_prompt = SYSTEM_PROMPT if not context else SYSTEM_PROMPT + "\n" + context
     msgs = [{"role": "system", "content": system_prompt}] + _history[-6:] + [{"role": "user", "content": q}]
 
+    tools_unavailable = False
     for model in MODELS:
         try:
             answer = _request_with_tools(model, msgs)
@@ -397,6 +426,10 @@ def think(q):
             _record_turn(q, answer)
             return answer
         except Exception as e:
+            if isinstance(e, _ToolsUnavailableError):
+                tools_unavailable = True
+                _safe_diagnostic(f"Model {model} did not respond; trying the next option", e)
+                continue
             if _is_rate_limited(e):
                 wait_sec = _retry_after_seconds(e)
                 _set_cooldown(wait_sec)
@@ -404,6 +437,11 @@ def think(q):
                 return _fallback_response(q)
             _safe_diagnostic(f"Model {model} did not respond; trying the next option", e)
 
+    if tools_unavailable:
+        degraded = _degraded_chat_response(msgs)
+        if degraded:
+            _record_turn(q, degraded)
+            return degraded
     return _fallback_response(q)
 
 
