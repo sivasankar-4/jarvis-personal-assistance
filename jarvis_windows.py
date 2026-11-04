@@ -498,21 +498,21 @@ def validate_path(target: str, base_directory: Path | str | None = None) -> Path
     return resolved
 
 
-def open_path(target: str, base_directory: Path | str | None = None) -> ToolResult:
+def open_path(path: str, base_directory: Path | str | None = None) -> ToolResult:
     try:
-        path = validate_path(target, base_directory)
+        resolved = validate_path(path, base_directory)
     except (OSError, ValueError):
         return _result("open_path", False, "I couldn't find that file or folder.")
     if not _is_windows():
         return _result("open_path", False, "Desktop control is available only on Windows.")
     try:
-        if path.is_dir():
-            process = subprocess.Popen(["explorer.exe", str(path)], close_fds=True)
-            return _result("open_path", True, f"Started File Explorer for {path.name or path.drive}.", pid=process.pid, kind="folder")
-        os.startfile(str(path))
-        return _result("open_path", True, f"Asked Windows to open {path.name} with its default application.", kind="file")
+        if resolved.is_dir():
+            process = subprocess.Popen(["explorer.exe", str(resolved)], close_fds=True)
+            return _result("open_path", True, f"Started File Explorer for {resolved.name or resolved.drive}.", pid=process.pid, kind="folder")
+        os.startfile(str(resolved))
+        return _result("open_path", True, f"Asked Windows to open {resolved.name} with its default application.", kind="file")
     except OSError:
-        return _result("open_path", False, f"Windows could not open {path.name}.")
+        return _result("open_path", False, f"Windows could not open {resolved.name}.")
 
 
 def open_website(url: str) -> ToolResult:
