@@ -130,14 +130,34 @@ class JarvisM1SecurityTests(unittest.TestCase):
         self.assertIn("not supported yet", brief)
 
     def test_10_unsupported_whatsapp_and_windows_volume_actions_reported_honestly(self):
-        """Unsupported WhatsApp sending and volume control return explicit honest messages."""
+        """WhatsApp sending still reports 'not supported'; volume control is now live
+        and routes through execute_tool returning a successful result."""
         wa_reply = jarvis_actions.try_action("send whatsapp to Alice saying hello")
         self.assertNotIn("Opening WhatsApp to message Alice", wa_reply)
         self.assertIn("not supported", wa_reply)
 
-        self.assertEqual(jarvis_actions.try_action("volume up"), "Windows volume control is not supported yet.")
-        self.assertEqual(jarvis_actions.try_action("volume down"), "Windows volume control is not supported yet.")
-        self.assertEqual(jarvis_actions.try_action("mute"), "Windows volume control is not supported yet.")
+        # Volume commands are now live — they must route through execute_tool and
+        # return a truthy, non-stub message (not the old "not supported yet" string).
+        from unittest.mock import patch as _patch
+        import jarvis_windows as _jw
+
+        def _fake_execute(tool_name, arguments, approved=False):
+            if tool_name == "adjust_volume":
+                msgs = {"up": "Volume increased.", "down": "Volume decreased.", "mute": "Volume muted (or unmuted)."}
+                return _jw.ToolResult(True, msgs[arguments["action"]])
+            return _jw.ToolResult(False, "unexpected")
+
+        with _patch("jarvis_tools.execute_tool", side_effect=_fake_execute):
+            up_reply   = jarvis_actions.try_action("volume up")
+            down_reply = jarvis_actions.try_action("volume down")
+            mute_reply = jarvis_actions.try_action("mute")
+
+        self.assertNotEqual(up_reply,   "Windows volume control is not supported yet.")
+        self.assertNotEqual(down_reply, "Windows volume control is not supported yet.")
+        self.assertNotEqual(mute_reply, "Windows volume control is not supported yet.")
+        self.assertIn("increased", up_reply)
+        self.assertIn("decreased", down_reply)
+        self.assertIn("muted",     mute_reply)
 
     def test_11_existing_safe_application_launching_still_works(self):
         """Normal safe application launching through brain works via validated tools."""

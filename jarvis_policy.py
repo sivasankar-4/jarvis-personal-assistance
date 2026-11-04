@@ -48,6 +48,7 @@ _LOW_RISK_TOOLS = {
     "wait_for_window",
     "find_files",
     "create_folder",
+    "adjust_volume",
 }
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards

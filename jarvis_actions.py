@@ -211,9 +211,16 @@ def try_action(q):
         result = jarvis_tools.execute_tool("launch_application", {"name": name})
         return result.message
 
-    # 7. Volume Controls (Unsupported on Windows without dedicated native API)
-    if any(k in q_clean for k in ("volume up", "louder", "volume down", "quieter", "mute", "mute volume", "mute the volume")):
-        return "Windows volume control is not supported yet."
+    # 7. Volume Controls
+    if any(k in q_clean for k in ("volume up", "louder", "increase volume")):
+        result = jarvis_tools.execute_tool("adjust_volume", {"action": "up"})
+        return result.message
+    if any(k in q_clean for k in ("volume down", "quieter", "decrease volume", "lower the volume", "lower volume")):
+        result = jarvis_tools.execute_tool("adjust_volume", {"action": "down"})
+        return result.message
+    if any(k in q_clean for k in ("mute", "mute volume", "mute the volume")):
+        result = jarvis_tools.execute_tool("adjust_volume", {"action": "mute"})
+        return result.message
 
     # 8. Date and Time (informational, read-only)
     if re.search(r"^(?:tell\s+me\s+)?(?:what(?:'s|\s+is)\s+(?:the\s+)?time|what\s+time\s+is\s+it|current\s+time)(?:\s+(?:right\s+)?now)?$", q_clean):

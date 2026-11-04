@@ -866,3 +866,49 @@ def close_application(name: str) -> ToolResult:
         return _result("close_application", False, f"Windows could not close {app.name}.", error=proc.stderr.strip())
     except OSError as exc:
         return _result("close_application", False, f"Windows could not close {app.name}.", error_type=type(exc).__name__)
+
+
+# Windows media virtual key codes — no extra dependency required.
+_VK_VOLUME_MUTE = 0xAD
+_VK_VOLUME_DOWN = 0xAE
+_VK_VOLUME_UP = 0xAF
+
+_VOLUME_ACTIONS: dict[str, int] = {
+    "up": _VK_VOLUME_UP,
+    "down": _VK_VOLUME_DOWN,
+    "mute": _VK_VOLUME_MUTE,
+}
+
+
+def adjust_volume(action: str) -> ToolResult:
+    """Adjust system volume using Windows media keys.
+
+    action must be one of: 'up', 'down', 'mute'.
+    'up' and 'down' send 5 media-key presses per call; 'mute' sends 1.
+    """
+    if not isinstance(action, str):
+        return _result("adjust_volume", False, "Volume action must be a string ('up', 'down', or 'mute').")
+    normalised = action.strip().lower()
+    vk = _VOLUME_ACTIONS.get(normalised)
+    if vk is None:
+        return _result(
+            "adjust_volume", False,
+            f"I don't understand the volume action '{action}'. "
+            "Please say 'up', 'down', or 'mute'.",
+        )
+    if not _is_windows():
+        return _result("adjust_volume", False, "Volume control is available only on Windows.")
+    presses = 1 if normalised == "mute" else 5
+    try:
+        user32 = ctypes.windll.user32
+        for _ in range(presses):
+            user32.keybd_event(vk, 0, 0, 0)
+            user32.keybd_event(vk, 0, _KEYUP, 0)
+    except (AttributeError, OSError) as exc:
+        return _result("adjust_volume", False, f"Windows could not change the volume: {exc}")
+    messages = {
+        "up":   "Volume increased.",
+        "down": "Volume decreased.",
+        "mute": "Volume muted (or unmuted).",
+    }
+    return _result("adjust_volume", True, messages[normalised], action=normalised, presses=presses)

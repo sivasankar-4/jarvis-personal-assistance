@@ -223,6 +223,19 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "adjust_volume",
+            "description": "Adjust the system volume. action must be 'up' (increase), 'down' (decrease), or 'mute' (toggle mute).",
+            "parameters": {
+                "type": "object",
+                "properties": {"action": {"type": "string", "enum": ["up", "down", "mute"]}},
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -264,6 +277,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "adjust_volume": ("adjust_volume", {"action": str}),
 }
 
 
