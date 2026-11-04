@@ -638,6 +638,217 @@ def type_text(text: str, expected_window: str) -> ToolResult:
         return _result("type_text", False, f"Windows could not type into {title}: {exc}", window=title, error=str(exc))
 
 
+def find_files(query: str, directory: str) -> ToolResult:
+    """Search for files and folders by name (case-insensitive substring match)."""
+    if not isinstance(query, str) or not query.strip():
+        return _result("find_files", False, "Please tell me what to search for.")
+    if not _is_windows():
+        return _result("find_files", False, "Desktop control is available only on Windows.")
+    search_query = query.strip().lower()
+    if not isinstance(directory, str) or not directory.strip():
+        search_dir = Path.home()
+    else:
+        try:
+            search_dir = validate_path(directory)
+        except (OSError, ValueError):
+            return _result("find_files", False, f"I couldn't find the folder {directory}.")
+    if not search_dir.is_dir():
+        return _result("find_files", False, f"{search_dir.name} is not a folder.")
+    matches: list[Path] = []
+    cap = 25
+    try:
+        for root, dirs, files in os.walk(search_dir):
+            try:
+                entries = dirs + files
+            except Exception:
+                continue
+            for entry in entries:
+                if search_query in entry.lower():
+                    matches.append(Path(root) / entry)
+                    if len(matches) >= cap:
+                        break
+            if len(matches) >= cap:
+                break
+    except (OSError, PermissionError):
+        pass
+    if not matches:
+        return _result(
+            "find_files", False,
+            f"I couldn't find anything matching '{query}' in {search_dir.name or search_dir.drive}.",
+        )
+    matches.sort()
+    display_limit = 10
+    lines = [str(m) for m in matches[:display_limit]]
+    msg_parts = [f"Found {'at least ' if len(matches) >= cap else ''}{len(matches)} match{'es' if len(matches) != 1 else ''}:"]
+    msg_parts.extend(lines)
+    if len(matches) > display_limit:
+        msg_parts.append(f"+{len(matches) - display_limit} more.")
+    return _result(
+        "find_files", True, "\n".join(msg_parts),
+        count=len(matches),
+        matches=[m.name for m in matches],
+    )
+
+
+def create_folder(path: str) -> ToolResult:
+    """Create a single new folder. Does not create intermediate directories."""
+    if not isinstance(path, str) or not path.strip() or "\x00" in path:
+        return _result("create_folder", False, "The folder path is empty or invalid.")
+    if not _is_windows():
+        return _result("create_folder", False, "Desktop control is available only on Windows.")
+    requested = Path(path).expanduser()
+    folder_name = requested.name
+    if not folder_name or folder_name in (".", ".."):
+        return _result("create_folder", False, "The folder name is invalid.")
+    if "/" in folder_name or "\\" in folder_name or "\x00" in folder_name:
+        return _result("create_folder", False, "The folder name contains invalid characters.")
+    try:
+        parent = validate_path(str(requested.parent))
+    except (OSError, ValueError):
+        return _result("create_folder", False, f"The parent folder does not exist.")
+    target = parent / folder_name
+    if target.exists():
+        return _result(
+            "create_folder", False,
+            f"A file or folder named {folder_name} already exists in {parent.name or parent.drive}.",
+        )
+    try:
+        target.mkdir(parents=False)
+    except OSError as exc:
+        return _result("create_folder", False, f"Windows could not create the folder {folder_name}.")
+    if target.is_dir():
+        return _result(
+            "create_folder", True,
+            f"Created folder {folder_name} in {parent.name or parent.drive}.",
+            kind="folder", verified=True,
+        )
+    return _result("create_folder", False, f"The folder {folder_name} could not be verified after creation.")
+
+
+def _validate_destination(source: Path, destination_str: str, tool: str) -> tuple[Path, ToolResult | None]:
+    """Resolve a destination path for move/copy, returning (final_path, error_or_None).
+
+    If destination is an existing folder the item keeps its original name inside it.
+    Otherwise destination is treated as the full new path whose parent must exist.
+    """
+    try:
+        dest = validate_path(destination_str)
+    except (OSError, ValueError):
+        # destination does not exist yet — treat as a new name under its parent
+        dest_path = Path(destination_str).expanduser()
+        dest_name = dest_path.name
+        if not dest_name or dest_name in (".", "..") or "\x00" in dest_name or "/" in dest_name or "\\" in dest_name:
+            return Path(), _result(tool, False, "The destination name is invalid.")
+        try:
+            dest_parent = validate_path(str(dest_path.parent))
+        except (OSError, ValueError):
+            return Path(), _result(tool, False, "The destination folder does not exist.")
+        return dest_parent / dest_name, None
+
+    # destination exists
+    if dest.is_dir():
+        return dest / source.name, None
+    # destination exists as a file — would overwrite
+    return dest, None
+
+
+def move_path(source: str, destination: str) -> ToolResult:
+    """Move a file or folder. Never overwrites an existing item."""
+    try:
+        src = validate_path(source)
+    except (OSError, ValueError):
+        return _result("move_path", False, "I couldn't find the source file or folder.")
+    if not _is_windows():
+        return _result("move_path", False, "Desktop control is available only on Windows.")
+    final_dest, err = _validate_destination(src, destination, "move_path")
+    if err is not None:
+        return err
+    if src == final_dest:
+        return _result("move_path", False, f"{src.name} is already in that location.")
+    if final_dest.exists():
+        return _result(
+            "move_path", False,
+            f"A file or folder named {final_dest.name} already exists in {final_dest.parent.name or final_dest.parent.drive}; I didn't move anything.",
+        )
+    try:
+        shutil.move(str(src), str(final_dest))
+    except OSError:
+        return _result("move_path", False, f"Windows could not move {src.name}.")
+    if final_dest.exists() and not src.exists():
+        kind = "folder" if final_dest.is_dir() else "file"
+        return _result(
+            "move_path", True,
+            f"Moved {src.name} to {final_dest.parent.name or final_dest.parent.drive}.",
+            kind=kind, verified=True,
+        )
+    return _result("move_path", False, f"The move of {src.name} could not be verified.")
+
+
+def copy_path(source: str, destination: str) -> ToolResult:
+    """Copy a file or folder. Never overwrites an existing item."""
+    try:
+        src = validate_path(source)
+    except (OSError, ValueError):
+        return _result("copy_path", False, "I couldn't find the source file or folder.")
+    if not _is_windows():
+        return _result("copy_path", False, "Desktop control is available only on Windows.")
+    final_dest, err = _validate_destination(src, destination, "copy_path")
+    if err is not None:
+        return err
+    if final_dest.exists():
+        return _result(
+            "copy_path", False,
+            f"A file or folder named {final_dest.name} already exists in {final_dest.parent.name or final_dest.parent.drive}; I didn't copy anything.",
+        )
+    try:
+        if src.is_dir():
+            shutil.copytree(str(src), str(final_dest))
+        else:
+            shutil.copy2(str(src), str(final_dest))
+    except OSError:
+        return _result("copy_path", False, f"Windows could not copy {src.name}.")
+    if final_dest.exists():
+        kind = "folder" if final_dest.is_dir() else "file"
+        return _result(
+            "copy_path", True,
+            f"Copied {src.name} to {final_dest.parent.name or final_dest.parent.drive}.",
+            kind=kind, verified=True,
+        )
+    return _result("copy_path", False, f"The copy of {src.name} could not be verified.")
+
+
+def rename_path(source: str, new_name: str) -> ToolResult:
+    """Rename a file or folder in place. Never overwrites an existing item."""
+    try:
+        src = validate_path(source)
+    except (OSError, ValueError):
+        return _result("rename_path", False, "I couldn't find the file or folder to rename.")
+    if not _is_windows():
+        return _result("rename_path", False, "Desktop control is available only on Windows.")
+    if not isinstance(new_name, str) or not new_name.strip():
+        return _result("rename_path", False, "Please provide a new name.")
+    clean_name = new_name.strip()
+    if "/" in clean_name or "\\" in clean_name or "\x00" in clean_name or clean_name in (".", ".."):
+        return _result("rename_path", False, "The new name must be a simple name without path separators.")
+    dest = src.parent / clean_name
+    if dest.exists():
+        return _result(
+            "rename_path", False,
+            f"A file or folder named {clean_name} already exists in {src.parent.name or src.parent.drive}.",
+        )
+    try:
+        src.rename(dest)
+    except OSError:
+        return _result("rename_path", False, f"Windows could not rename {src.name}.")
+    if dest.exists():
+        return _result(
+            "rename_path", True,
+            f"Renamed {src.name} to {clean_name}.",
+            kind="folder" if dest.is_dir() else "file", verified=True,
+        )
+    return _result("rename_path", False, f"The rename of {src.name} could not be verified.")
+
+
 def close_application(name: str) -> ToolResult:
     """Close an application window safely with honest status reporting."""
     if not isinstance(name, str) or not name.strip():

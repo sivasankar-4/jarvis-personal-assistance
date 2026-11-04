@@ -146,6 +146,83 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_files",
+            "description": "Search for files and folders by name in a directory (case-insensitive substring match, recursive). The directory may be an empty string to search the user's home folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "directory": {"type": "string"},
+                },
+                "required": ["query", "directory"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_folder",
+            "description": "Create a single new folder at the given path. The parent directory must already exist. Does not create intermediate directories.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_path",
+            "description": "Move a file or folder to a new location. Never overwrites an existing file or folder. If the destination is an existing folder the item keeps its name inside it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "destination": {"type": "string"},
+                },
+                "required": ["source", "destination"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "copy_path",
+            "description": "Copy a file or folder to a new location. Never overwrites an existing file or folder. If the destination is an existing folder the item keeps its name inside it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "destination": {"type": "string"},
+                },
+                "required": ["source", "destination"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rename_path",
+            "description": "Rename a file or folder in place. The new_name must be a simple name without path separators, not a full path. Never overwrites an existing file or folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "new_name": {"type": "string"},
+                },
+                "required": ["source", "new_name"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -182,6 +259,11 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "send_shortcut": ("send_shortcut", {"shortcut": str}),
     "type_text": ("type_text", {"text": str, "expected_window": str}),
     "close_application": ("close_application", {"name": str}),
+    "find_files": ("find_files", {"query": str, "directory": str}),
+    "create_folder": ("create_folder", {"path": str}),
+    "move_path": ("move_path", {"source": str, "destination": str}),
+    "copy_path": ("copy_path", {"source": str, "destination": str}),
+    "rename_path": ("rename_path", {"source": str, "new_name": str}),
 }
 
 

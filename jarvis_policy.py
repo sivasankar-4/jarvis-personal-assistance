@@ -46,12 +46,17 @@ _LOW_RISK_TOOLS = {
     "search_web",
     "list_windows",
     "wait_for_window",
+    "find_files",
+    "create_folder",
 }
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
 _MODERATE_RISK_TOOLS = {
     "type_text",
     "send_shortcut",
+    "move_path",
+    "copy_path",
+    "rename_path",
 }
 
 # High-risk tools: explicit user approval strictly required before execution
