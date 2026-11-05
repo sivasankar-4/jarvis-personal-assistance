@@ -49,11 +49,15 @@ _LOW_RISK_TOOLS = {
     "find_files",
     "create_folder",
     "take_screenshot",
+    "save_routine",
+    "list_routines",
     "adjust_volume",
 }
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
 _MODERATE_RISK_TOOLS = {
+    "run_routine",
+    "delete_routine",
     "click_and_verify",
     "click_at",
     "type_text",

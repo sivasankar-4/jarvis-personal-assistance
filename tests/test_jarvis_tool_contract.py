@@ -49,6 +49,8 @@ class ToolContractTests(unittest.TestCase):
                             dummy_args[arg_name] = "contract"
                         elif arg_type is int:
                             dummy_args[arg_name] = 1
+                        elif arg_type is list:
+                            dummy_args[arg_name] = []
                         else:
                             dummy_args[arg_name] = "contract"
 

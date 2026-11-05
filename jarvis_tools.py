@@ -6,6 +6,7 @@ import json
 import urllib.parse
 
 import jarvis_policy
+import jarvis_routines
 import jarvis_windows
 
 
@@ -226,6 +227,58 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "save_routine",
+            "description": "Save a named routine: an ordered list of tool calls Jarvis can replay later with run_routine. Steps may only use: launch_application, open_website, open_path, create_folder, adjust_volume. Use when the user asks Jarvis to remember a setup or sequence under a name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "steps": {
+                        "type": "array", "minItems": 1, "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {"tool": {"type": "string"}, "arguments": {"type": "object"}},
+                            "required": ["tool", "arguments"], "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["name", "steps"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_routine",
+            "description": "Run a routine previously saved with save_routine, by name. Steps run in order and stop being reported honestly if one fails.",
+            "parameters": {
+                "type": "object", "properties": {"name": {"type": "string"}},
+                "required": ["name"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_routines",
+            "description": "List the user's saved routines and how many steps each has.",
+            "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_routine",
+            "description": "Delete a saved routine by name. This only removes the saved routine definition; it does not delete files.",
+            "parameters": {
+                "type": "object", "properties": {"name": {"type": "string"}},
+                "required": ["name"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "click_and_verify",
             "description": "Click at screen coordinates and then check whether the screen visibly changed: captures a screenshot before and after the click and reports the changed region, its size, and any foreground-window change. Prefer this over click_at when you need to know whether the click had an effect. It reports WHAT changed, not whether the change was the intended one.",
             "parameters": {
@@ -324,6 +377,10 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "save_routine": (jarvis_routines.save_routine, {"name": str, "steps": list}),
+    "run_routine": (jarvis_routines.run_routine, {"name": str}),
+    "list_routines": (jarvis_routines.list_routines, {}),
+    "delete_routine": (jarvis_routines.delete_routine, {"name": str}),
     "click_and_verify": ("click_and_verify", {"x": int, "y": int, "button": str, "clicks": int}),
     "click_at": ("click_at", {"x": int, "y": int, "button": str, "clicks": int}),
     "take_screenshot": ("take_screenshot", {"target": str}),
