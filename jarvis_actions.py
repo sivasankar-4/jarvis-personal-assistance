@@ -211,7 +211,12 @@ def try_action(q):
         result = jarvis_tools.execute_tool("launch_application", {"name": name})
         return result.message
 
-    # 7. Volume Controls
+    # 7. Screenshot observation
+    if any(phrase in q_clean for phrase in ("take a screenshot", "capture the screen", "capture screen")):
+        result = jarvis_tools.execute_tool("take_screenshot", {"target": "screen"})
+        return result.message
+
+    # 8. Volume Controls
     if any(k in q_clean for k in ("volume up", "louder", "increase volume")):
         result = jarvis_tools.execute_tool("adjust_volume", {"action": "up"})
         return result.message
@@ -222,7 +227,7 @@ def try_action(q):
         result = jarvis_tools.execute_tool("adjust_volume", {"action": "mute"})
         return result.message
 
-    # 8. Date and Time (informational, read-only)
+    # 9. Date and Time (informational, read-only)
     if re.search(r"^(?:tell\s+me\s+)?(?:what(?:'s|\s+is)\s+(?:the\s+)?time|what\s+time\s+is\s+it|current\s+time)(?:\s+(?:right\s+)?now)?$", q_clean):
         return "It is currently " + datetime.datetime.now().strftime("%I:%M %p")
     if re.search(r"^(?:tell\s+me\s+)?(?:what(?:'s|\s+is)\s+(?:(?:the|today(?:'s)?)\s+date|the\s+day)(?:\s+today)?|what\s+day\s+is\s+(?:it\s+)?today|what\s+day\s+is\s+it|current\s+date|today(?:'s)?\s+date)$", q_clean):

@@ -226,6 +226,19 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "take_screenshot",
+            "description": "Capture an image of the screen or the active window and save it as a PNG in the screenshots folder. Use when the user asks for a screenshot or to see the screen. This only observes; it does not click or type.",
+            "parameters": {
+                "type": "object",
+                "properties": {"target": {"type": "string", "enum": ["screen", "active_window"]}},
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "adjust_volume",
             "description": "Adjust the system volume. action must be 'up' (increase), 'down' (decrease), or 'mute' (toggle mute).",
             "parameters": {
@@ -277,6 +290,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "take_screenshot": ("take_screenshot", {"target": str}),
     "adjust_volume": ("adjust_volume", {"action": str}),
 }
 

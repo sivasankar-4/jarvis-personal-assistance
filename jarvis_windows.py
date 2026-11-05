@@ -8,6 +8,7 @@ honest result that callers can report or audit.
 from __future__ import annotations
 
 import ctypes
+import datetime
 import json
 import ntpath
 import os
@@ -17,6 +18,11 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+try:
+    from PIL import ImageGrab
+except ImportError:
+    ImageGrab = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +126,15 @@ class _InputUnion(ctypes.Union):
 class _Input(ctypes.Structure):
     _anonymous_ = ("union",)
     _fields_ = [("type", ctypes.c_ulong), ("union", _InputUnion)]
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
 
 
 def _is_windows() -> bool:
@@ -882,6 +897,55 @@ _VOLUME_ACTIONS: dict[str, int] = {
     "down": _VK_VOLUME_DOWN,
     "mute": _VK_VOLUME_MUTE,
 }
+
+
+def _screenshots_dir() -> Path:
+    return Path(__file__).resolve().parent / "screenshots"
+
+
+def take_screenshot(target: str) -> ToolResult:
+    """Capture the primary display or foreground window as a local PNG."""
+    if target not in ("screen", "active_window"):
+        return _result("take_screenshot", False, "I can capture 'screen' or 'active_window'.")
+    if not _is_windows():
+        return _result("take_screenshot", False, "Screenshots are available only on Windows.")
+    if ImageGrab is None:
+        return _result("take_screenshot", False, "Screenshots need Pillow. Run install.bat to install it.")
+
+    try:
+        if target == "screen":
+            image = ImageGrab.grab()
+        else:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return _result("take_screenshot", False, "There is no active window to capture.")
+            rect = _RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return _result("take_screenshot", False, "I couldn't get the active window's position.")
+            if rect.right <= rect.left or rect.bottom <= rect.top:
+                return _result("take_screenshot", False, "I couldn't get the active window's position.")
+            image = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom))
+
+        directory = _screenshots_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        stem = datetime.datetime.now().strftime("screenshot_%Y%m%d_%H%M%S")
+        path = directory / f"{stem}.png"
+        suffix = 2
+        while path.exists():
+            path = directory / f"{stem}_{suffix}.png"
+            suffix += 1
+        image.save(path)
+    except OSError:
+        return _result("take_screenshot", False, "Windows could not save the screenshot.")
+
+    if not path.exists():
+        return _result("take_screenshot", False, "The screenshot file was not created.")
+    captured = "screen" if target == "screen" else "active window"
+    return _result(
+        "take_screenshot", True,
+        f"Saved a screenshot of the {captured} as {path.name}.",
+        file_name=path.name, width=image.size[0], height=image.size[1], target=target,
+    )
 
 
 def adjust_volume(action: str) -> ToolResult:

@@ -48,6 +48,7 @@ _LOW_RISK_TOOLS = {
     "wait_for_window",
     "find_files",
     "create_folder",
+    "take_screenshot",
     "adjust_volume",
 }
 
