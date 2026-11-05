@@ -91,6 +91,10 @@ _MOUSEEVENTF_RIGHTDOWN = 0x0008
 _MOUSEEVENTF_RIGHTUP = 0x0010
 _DIFF_PIXEL_THRESHOLD = 24
 _DIFF_MIN_CHANGED_PIXELS = 100
+_FO_DELETE = 0x0003
+_FOF_ALLOWUNDO = 0x0040
+_FOF_NOCONFIRMATION = 0x0010
+_FOF_NOERRORUI = 0x0400
 
 
 class _MouseInput(ctypes.Structure):
@@ -146,6 +150,19 @@ class _RECT(ctypes.Structure):
 
 class _POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _SHFILEOPSTRUCTW(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("wFunc", ctypes.c_uint),
+        ("pFrom", ctypes.c_void_p),
+        ("pTo", ctypes.c_void_p),
+        ("fFlags", ctypes.c_ushort),
+        ("fAnyOperationsAborted", ctypes.c_bool),
+        ("hNameMappings", ctypes.c_void_p),
+        ("lpszProgressTitle", ctypes.c_wchar_p),
+    ]
 
 
 def _is_windows() -> bool:
@@ -909,6 +926,49 @@ def rename_path(source: str, new_name: str) -> ToolResult:
             kind="folder" if dest.is_dir() else "file", verified=True,
         )
     return _result("rename_path", False, f"The rename of {src.name} could not be verified.")
+
+
+def _send_to_recycle_bin(resolved: Path) -> tuple[bool, str]:
+    """Ask the Windows shell to move a file or folder into the Recycle Bin."""
+    source_buffer = ctypes.create_unicode_buffer(str(resolved) + "\x00")
+    operation = _SHFILEOPSTRUCTW()
+    operation.wFunc = _FO_DELETE
+    operation.pFrom = ctypes.cast(source_buffer, ctypes.c_void_p)
+    operation.fFlags = _FOF_ALLOWUNDO | _FOF_NOCONFIRMATION | _FOF_NOERRORUI
+    try:
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+    except (AttributeError, OSError, TypeError):
+        return False, f"Windows could not move {resolved.name} to the Recycle Bin."
+    if result != 0 or operation.fAnyOperationsAborted:
+        return False, f"Windows could not move {resolved.name} to the Recycle Bin."
+    return True, ""
+
+
+def delete_file(path: str) -> ToolResult:
+    """Move an existing file or folder to the Windows Recycle Bin."""
+    if not _is_windows():
+        return _result("delete_file", False, "File deletion is available only on Windows.")
+    try:
+        resolved = validate_path(path)
+    except (OSError, ValueError):
+        return _result("delete_file", False, f"I couldn't find {path}.")
+    if resolved.parent == resolved:
+        return _result("delete_file", False, "I can't delete a whole drive.")
+    if resolved == Path.home():
+        return _result("delete_file", False, "I can't delete your home folder.")
+    if resolved == Path(os.environ.get("SystemRoot", r"C:\Windows")):
+        return _result("delete_file", False, "I can't delete the Windows folder.")
+
+    is_directory = resolved.is_dir()
+    ok, message = _send_to_recycle_bin(resolved)
+    if not ok:
+        return _result("delete_file", False, message)
+    if resolved.exists():
+        return _result("delete_file", False, f"Windows reported success but {resolved.name} is still there.")
+    return _result(
+        "delete_file", True, f"Moved {resolved.name} to the Recycle Bin.",
+        name=resolved.name, is_directory=is_directory, verified=True,
+    )
 
 
 def close_application(name: str) -> ToolResult:

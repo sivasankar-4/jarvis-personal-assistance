@@ -227,6 +227,17 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "delete_file",
+            "description": "Move a file or folder to the Windows Recycle Bin. The item stays recoverable from the Recycle Bin; this is NOT permanent deletion. This is a high-risk action and only runs after the user confirms. Use when the user asks to delete or remove a file or folder.",
+            "parameters": {
+                "type": "object", "properties": {"path": {"type": "string"}},
+                "required": ["path"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_routine",
             "description": "Save a named routine: an ordered list of tool calls Jarvis can replay later with run_routine. Steps may only use: launch_application, open_website, open_path, create_folder, adjust_volume. Use when the user asks Jarvis to remember a setup or sequence under a name.",
             "parameters": {
@@ -377,6 +388,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "delete_file": ("delete_file", {"path": str}),
     "save_routine": (jarvis_routines.save_routine, {"name": str, "steps": list}),
     "run_routine": (jarvis_routines.run_routine, {"name": str}),
     "list_routines": (jarvis_routines.list_routines, {}),
