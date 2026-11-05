@@ -1,7 +1,7 @@
 # 🚀 JARVIS AI PERSONAL ASSISTANT - Complete Setup Package
 
-**Version:** 2.0 (Executive Edition)  
-**Last Updated:** 2026-10-22  
+**Version:** 2.0  
+**Last Updated:** 2026-11-05  
 **License:** Open Source & Free to Use  
 
 ---
@@ -15,7 +15,7 @@ Everything you need to run a **voice-controlled AI personal assistant** with:
 - ✅ Live stock market analysis + Buy/Sell signals
 - ✅ Hybrid cloud + local offline failover (zero crashes)
 - ✅ 3D holographic Iron Man HUD dashboard
-- ✅ Works on macOS, Windows, and Linux
+- ✅ Windows 10/11 (desktop control is Windows-only)
 
 ---
 
@@ -24,7 +24,7 @@ Everything you need to run a **voice-controlled AI personal assistant** with:
 ### Step 1: System Requirements
 - **Python:** 3.10 or newer ([python.org](https://python.org))
 - **Free Groq API Key:** Get it free from [console.groq.com/keys](https://console.groq.com/keys)
-- **OS:** macOS, Windows 10/11, or Linux
+- **OS:** Windows 10/11
 
 ### Step 2: Run Installer
 **On macOS / Linux:**
@@ -51,7 +51,7 @@ source .venv/bin/activate && python jarvis_voice.py
 ```
 
 ### Step 5: Open Holographic HUD
-Open `jarvis_workplace.html` in your browser (Chrome/Safari) for the 3D Iron Man dashboard.
+Open `jarvis_workplace.html` in your browser (Chrome/Edge) for the 3D Iron Man dashboard.
 
 ---
 
@@ -66,6 +66,7 @@ Open `jarvis_workplace.html` in your browser (Chrome/Safari) for the 3D Iron Man
 | `"Check my unread emails"` | Reads inbox and gives 30-second briefing |
 | `"Send WhatsApp to Pallavi"` | Auto-triggers WhatsApp Web for quick messaging |
 | `"Volume up"` / `"Mute"` | Hands-free system volume control |
+| `"Find my notes"` / `"Move file to folder"` | File search, create, move, copy and rename — never overwrites |
 | `"What time is it?"` | Tells current time and date |
 
 ---
@@ -77,6 +78,12 @@ Open `jarvis_workplace.html` in your browser (Chrome/Safari) for the 3D Iron Man
 - **`jarvis_voice.py`** — Microphone listener & speech recognition loop
 - **`jarvis_actions.py`** — Local app automation, WhatsApp, email, stock market
 - **`jarvis_market.py`** — Live Yahoo Finance integration with Buy/Sell signals
+- **`jarvis_windows.py`** — Windows desktop control and all tool implementations
+- **`jarvis_tools.py`** — Tool schemas, registry, validation and dispatch
+- **`jarvis_policy.py`** — Risk tiers, approvals, and action audit policy
+- **`jarvis_planner.py`** — Planner for direct desktop requests
+- **`jarvis_tasks.py`** — Multi-step task executor with verification
+- **`jarvis_memory.py`** — Local SQLite memory with secret redaction
 
 ### Configuration & Setup
 - **`requirements.txt`** — Python dependencies (auto-installed)
@@ -152,16 +159,14 @@ Double-click `jarvis_workplace.html` to open:
 - **Disk:** 1GB+ SSD (faster startup)
 
 ### Supported OS
-- **macOS:** 10.14+
-- **Windows:** 10/11 (64-bit)
-- **Linux:** Ubuntu 18.04+, Debian 10+, Fedora 30+
+- **Windows:** 10/11 (64-bit) — other operating systems are not supported.
 
 ---
 
 ## 🚨 Troubleshooting
 
 ### Issue: "I don't hear Jarvis respond"
-**Solution:** Check system volume isn't muted. On macOS, test speech with: `say "hello"`
+**Solution:** Check system volume isn't muted.
 
 ### Issue: "Microphone not working"
 **Solution:** Grant microphone permissions in System Settings → Privacy → Microphone

@@ -265,5 +265,47 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(result.ok)
 
 
+
+class SelfDestinationTests(unittest.TestCase):
+    """OBS-1: copy/move a folder into its own subfolder must be refused cleanly."""
+
+    def test_copy_folder_into_own_subfolder_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp) / "Src"
+            src.mkdir()
+            (src / "file.txt").write_text("x", encoding="utf-8")
+            with patch("jarvis_windows.audit_action"), patch("jarvis_windows._is_windows", return_value=True):
+                result = jarvis_windows.copy_path(str(src), str(src / "Inner"))
+            self.assertFalse(result.ok)
+            self.assertIn("into itself", result.message)
+            # Nothing must have been created inside src
+            self.assertFalse((src / "Inner").exists())
+
+    def test_move_folder_into_own_subfolder_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp) / "Src"
+            src.mkdir()
+            (src / "file.txt").write_text("x", encoding="utf-8")
+            with patch("jarvis_windows.audit_action"), patch("jarvis_windows._is_windows", return_value=True):
+                result = jarvis_windows.move_path(str(src), str(src / "Inner"))
+            self.assertFalse(result.ok)
+            self.assertIn("into itself", result.message)
+            # src and its contents must be fully intact
+            self.assertTrue(src.exists())
+            self.assertTrue((src / "file.txt").exists())
+
+    def test_copy_folder_to_sibling_still_works(self):
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp) / "Src"
+            src.mkdir()
+            (src / "file.txt").write_text("x", encoding="utf-8")
+            sibling = Path(temp) / "SrcCopy"
+            with patch("jarvis_windows.audit_action"), patch("jarvis_windows._is_windows", return_value=True):
+                result = jarvis_windows.copy_path(str(src), str(sibling))
+            self.assertTrue(result.ok)
+            self.assertTrue(sibling.exists())
+            self.assertTrue((sibling / "file.txt").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

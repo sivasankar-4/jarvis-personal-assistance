@@ -30,6 +30,15 @@ def _stub_windll():
 # ---------------------------------------------------------------------------
 class TestAdjustVolume(unittest.TestCase):
 
+    def setUp(self):
+        import jarvis_windows
+        stub_windll, _ = _stub_windll()
+        # Install stub for the whole class so patch.object(…, "user32", …) works
+        # on non-Windows machines where ctypes.windll may not exist.
+        patcher = patch.object(jarvis_windows.ctypes, "windll", stub_windll, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _import(self):
         """Re-import jarvis_windows with a stubbed ctypes.windll."""
         import importlib

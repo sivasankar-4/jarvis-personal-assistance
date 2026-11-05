@@ -765,6 +765,8 @@ def move_path(source: str, destination: str) -> ToolResult:
         return err
     if src == final_dest:
         return _result("move_path", False, f"{src.name} is already in that location.")
+    if src.is_dir() and src in final_dest.parents:
+        return _result("move_path", False, "I can't move a folder into itself.")
     if final_dest.exists():
         return _result(
             "move_path", False,
@@ -795,6 +797,8 @@ def copy_path(source: str, destination: str) -> ToolResult:
     final_dest, err = _validate_destination(src, destination, "copy_path")
     if err is not None:
         return err
+    if src.is_dir() and src in final_dest.parents:
+        return _result("copy_path", False, "I can't copy a folder into itself.")
     if final_dest.exists():
         return _result(
             "copy_path", False,
