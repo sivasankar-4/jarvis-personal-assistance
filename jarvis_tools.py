@@ -226,6 +226,23 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "click_at",
+            "description": "Move the mouse cursor to screen coordinates (x, y) and click. Coordinates are pixels from the top-left of the primary display. clicks is 1 for a single click or 2 for a double-click. Use coordinates from a screenshot or window position. The result verifies the cursor position, not the effect of the click.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer"}, "y": {"type": "integer"},
+                    "button": {"type": "string", "enum": ["left", "right"]},
+                    "clicks": {"type": "integer"},
+                },
+                "required": ["x", "y", "button", "clicks"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "take_screenshot",
             "description": "Capture an image of the screen or the active window and save it as a PNG in the screenshots folder. Use when the user asks for a screenshot or to see the screen. This only observes; it does not click or type.",
             "parameters": {
@@ -290,6 +307,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "click_at": ("click_at", {"x": int, "y": int, "button": str, "clicks": int}),
     "take_screenshot": ("take_screenshot", {"target": str}),
     "adjust_volume": ("adjust_volume", {"action": str}),
 }

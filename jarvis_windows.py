@@ -84,6 +84,10 @@ _SAFE_SHORTCUTS = {
 }
 _KEYUP = 0x0002
 _KEYEVENTF_UNICODE = 0x0004
+_MOUSEEVENTF_LEFTDOWN = 0x0002
+_MOUSEEVENTF_LEFTUP = 0x0004
+_MOUSEEVENTF_RIGHTDOWN = 0x0008
+_MOUSEEVENTF_RIGHTUP = 0x0010
 
 
 class _MouseInput(ctypes.Structure):
@@ -135,6 +139,10 @@ class _RECT(ctypes.Structure):
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long),
     ]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
 def _is_windows() -> bool:
@@ -946,6 +954,48 @@ def take_screenshot(target: str) -> ToolResult:
         f"Saved a screenshot of the {captured} as {path.name}.",
         file_name=path.name, width=image.size[0], height=image.size[1], target=target,
     )
+
+
+def click_at(x: int, y: int, button: str, clicks: int) -> ToolResult:
+    """Move to a screen coordinate and click, verifying cursor placement."""
+    if not _is_windows():
+        return _result("click_at", False, "Mouse control is available only on Windows.")
+    if button not in ("left", "right"):
+        return _result("click_at", False, "I can click the 'left' or 'right' mouse button.")
+    if clicks not in (1, 2):
+        return _result("click_at", False, "I can click once or double-click.")
+    if isinstance(x, bool) or isinstance(y, bool) or not isinstance(x, int) or not isinstance(y, int):
+        return _result("click_at", False, "Click coordinates must be whole numbers.")
+
+    user32 = ctypes.windll.user32
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+    if not (0 <= x < width and 0 <= y < height):
+        return _result("click_at", False, f"({x}, {y}) is outside the screen ({width}x{height}).")
+    if not user32.SetCursorPos(x, y):
+        return _result("click_at", False, "Windows could not move the mouse.")
+
+    down_flag, up_flag = (
+        (_MOUSEEVENTF_LEFTDOWN, _MOUSEEVENTF_LEFTUP)
+        if button == "left"
+        else (_MOUSEEVENTF_RIGHTDOWN, _MOUSEEVENTF_RIGHTUP)
+    )
+    time.sleep(0.05)
+    for index in range(clicks):
+        user32.mouse_event(down_flag, 0, 0, 0, 0)
+        user32.mouse_event(up_flag, 0, 0, 0, 0)
+        if index < clicks - 1:
+            time.sleep(0.15)
+
+    point = _POINT()
+    user32.GetCursorPos(ctypes.byref(point))
+    verified = point.x == x and point.y == y
+    message = (
+        f"Clicked the {button} mouse button at ({x}, {y})."
+        if clicks == 1
+        else f"Double-clicked the {button} mouse button at ({x}, {y})."
+    )
+    return _result("click_at", True, message, x=x, y=y, button=button, clicks=clicks, verified=verified)
 
 
 def adjust_volume(action: str) -> ToolResult:

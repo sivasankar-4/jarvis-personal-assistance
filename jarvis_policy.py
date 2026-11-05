@@ -54,6 +54,7 @@ _LOW_RISK_TOOLS = {
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
 _MODERATE_RISK_TOOLS = {
+    "click_at",
     "type_text",
     "send_shortcut",
     "move_path",
