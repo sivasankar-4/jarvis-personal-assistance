@@ -159,7 +159,7 @@ class _SHFILEOPSTRUCTW(ctypes.Structure):
         ("pFrom", ctypes.c_void_p),
         ("pTo", ctypes.c_void_p),
         ("fFlags", ctypes.c_ushort),
-        ("fAnyOperationsAborted", ctypes.c_bool),
+        ("fAnyOperationsAborted", ctypes.c_int),
         ("hNameMappings", ctypes.c_void_p),
         ("lpszProgressTitle", ctypes.c_wchar_p),
     ]

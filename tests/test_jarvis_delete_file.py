@@ -20,6 +20,10 @@ class DeleteFileTests(unittest.TestCase):
     def tearDown(self):
         jarvis_policy.clear_pending_approval()
 
+    def test_shell_struct_layout(self):
+        self.assertEqual(ctypes.sizeof(jarvis_windows._SHFILEOPSTRUCTW), 56)
+        self.assertEqual(jarvis_windows._SHFILEOPSTRUCTW.fAnyOperationsAborted.offset, 36)
+
     @staticmethod
     def _remove(path):
         if path.is_dir():
