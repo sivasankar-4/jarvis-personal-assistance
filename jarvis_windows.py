@@ -20,8 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
-    from PIL import ImageGrab
+    from PIL import ImageChops, ImageGrab
 except ImportError:
+    ImageChops = None
     ImageGrab = None
 
 
@@ -88,6 +89,8 @@ _MOUSEEVENTF_LEFTDOWN = 0x0002
 _MOUSEEVENTF_LEFTUP = 0x0004
 _MOUSEEVENTF_RIGHTDOWN = 0x0008
 _MOUSEEVENTF_RIGHTUP = 0x0010
+_DIFF_PIXEL_THRESHOLD = 24
+_DIFF_MIN_CHANGED_PIXELS = 100
 
 
 class _MouseInput(ctypes.Structure):
@@ -996,6 +999,65 @@ def click_at(x: int, y: int, button: str, clicks: int) -> ToolResult:
         else f"Double-clicked the {button} mouse button at ({x}, {y})."
     )
     return _result("click_at", True, message, x=x, y=y, button=button, clicks=clicks, verified=verified)
+
+
+def _diff_summary(before, after) -> tuple[bool, float, list | None]:
+    """Summarize meaningful visual differences between two Pillow images."""
+    if before.size != after.size:
+        width = max(before.size[0], after.size[0])
+        height = max(before.size[1], after.size[1])
+        return True, 100.0, [0, 0, width, height]
+    diff = ImageChops.difference(before.convert("RGB"), after.convert("RGB")).convert("L")
+    mask = diff.point(lambda pixel: 255 if pixel > _DIFF_PIXEL_THRESHOLD else 0)
+    changed_pixels = mask.histogram()[255]
+    width, height = before.size
+    region = mask.getbbox()
+    return (
+        changed_pixels >= _DIFF_MIN_CHANGED_PIXELS,
+        round(100.0 * changed_pixels / (width * height), 2),
+        list(region) if region else None,
+    )
+
+
+def click_and_verify(x: int, y: int, button: str, clicks: int) -> ToolResult:
+    """Click once or twice, then report mechanical visual changes only."""
+    if not _is_windows():
+        return _result("click_and_verify", False, "Mouse control is available only on Windows.")
+    if ImageGrab is None:
+        return _result("click_and_verify", False, "Click verification needs Pillow. Run install.bat to install it.")
+    try:
+        before_image = ImageGrab.grab()
+    except OSError:
+        return _result("click_and_verify", False, "Windows could not capture the screen to verify the click.")
+    foreground_before = foreground_window_title()
+
+    click_result = click_at(x, y, button, clicks)
+    if not click_result.ok:
+        return click_result
+
+    try:
+        time.sleep(0.5)
+        after_image = ImageGrab.grab()
+    except OSError:
+        return _result("click_and_verify", False, "Windows could not capture the screen to verify the click.")
+    foreground_after = foreground_window_title()
+    changed, percent, region = _diff_summary(before_image, after_image)
+    if changed:
+        message = (
+            f"{click_result.message} The screen changed around "
+            f"({region[0]}, {region[1]})-({region[2]}, {region[3]}), covering {percent}% of the screen."
+        )
+    else:
+        message = f"{click_result.message} No visible screen change detected."
+    if foreground_after != foreground_before:
+        message += f" The active window is now '{foreground_after}'."
+    return _result(
+        "click_and_verify", True, message,
+        x=x, y=y, button=button, clicks=clicks,
+        cursor_verified=click_result.data.get("verified"),
+        changed=changed, changed_percent=percent, change_region=region,
+        foreground_before=foreground_before, foreground_after=foreground_after,
+    )
 
 
 def adjust_volume(action: str) -> ToolResult:

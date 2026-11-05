@@ -226,6 +226,23 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "click_and_verify",
+            "description": "Click at screen coordinates and then check whether the screen visibly changed: captures a screenshot before and after the click and reports the changed region, its size, and any foreground-window change. Prefer this over click_at when you need to know whether the click had an effect. It reports WHAT changed, not whether the change was the intended one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer"}, "y": {"type": "integer"},
+                    "button": {"type": "string", "enum": ["left", "right"]},
+                    "clicks": {"type": "integer"},
+                },
+                "required": ["x", "y", "button", "clicks"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "click_at",
             "description": "Move the mouse cursor to screen coordinates (x, y) and click. Coordinates are pixels from the top-left of the primary display. clicks is 1 for a single click or 2 for a double-click. Use coordinates from a screenshot or window position. The result verifies the cursor position, not the effect of the click.",
             "parameters": {
@@ -307,6 +324,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "click_and_verify": ("click_and_verify", {"x": int, "y": int, "button": str, "clicks": int}),
     "click_at": ("click_at", {"x": int, "y": int, "button": str, "clicks": int}),
     "take_screenshot": ("take_screenshot", {"target": str}),
     "adjust_volume": ("adjust_volume", {"action": str}),
