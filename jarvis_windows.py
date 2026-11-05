@@ -152,6 +152,38 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def _enable_dpi_awareness() -> bool:
+    """Best-effort DPI setup that must run before window metrics are read.
+
+    Failure leaves the process in legacy logical-coordinate mode and tools still work.
+    """
+    if not _is_windows():
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        set_context = user32.SetProcessDpiAwarenessContext
+        set_context.restype = ctypes.c_bool
+        if set_context(ctypes.c_void_p(-4)):
+            return True
+    except Exception:
+        pass
+    try:
+        result = ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        if result in (0, 0x80070005):
+            return True
+    except Exception:
+        pass
+    try:
+        if ctypes.windll.user32.SetProcessDPIAware():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+DPI_AWARENESS_ENABLED = _enable_dpi_awareness()
+
+
 def _normalize_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
