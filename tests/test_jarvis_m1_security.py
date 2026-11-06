@@ -329,25 +329,25 @@ class JarvisM1SecurityTests(unittest.TestCase):
         self.assertIn("no focused window", result.message)
 
     def test_notepad_keyboard_injection_failure_returns_failure(self):
-        """Keyboard SendInput failure is reported honestly with diagnostics."""
+        """Direct insertion without a confirming read-back is reported honestly."""
         with patch("jarvis_windows.foreground_window_title", return_value="Untitled - Notepad"), patch(
-            "ctypes.windll.user32.SendInput", return_value=0
-        ), patch("ctypes.GetLastError", return_value=5), patch("jarvis_windows.audit_action"):
+            "jarvis_windows._find_edit_control", return_value=123
+        ), patch("jarvis_windows._get_control_text", side_effect=["", ""]), patch("jarvis_windows.audit_action"):
             result = jarvis_windows.type_text("hello", "Notepad")
         self.assertFalse(result.ok)
-        self.assertIn("Windows could not type into Untitled - Notepad", result.message)
-        self.assertIn("error code 5", result.message)
+        self.assertIn("could not confirm", result.message)
 
     def test_notepad_successful_injection_is_reported_accurately(self):
-        """Successful SendInput injection is reported accurately with character counts."""
+        """Verified direct insertion is reported accurately with character counts."""
         with patch("jarvis_windows.foreground_window_title", return_value="Untitled - Notepad"), patch(
-            "ctypes.windll.user32.SendInput", return_value=1
-        ), patch("jarvis_windows.audit_action"):
+            "jarvis_windows._find_edit_control", return_value=123
+        ), patch("jarvis_windows._get_control_text", side_effect=["", "hello"]), patch("jarvis_windows.audit_action"):
             result = jarvis_windows.type_text("hello", "Notepad")
         self.assertTrue(result.ok)
         self.assertEqual(result.message, "Typed 5 characters into Untitled - Notepad.")
         self.assertEqual(result.data["characters"], 5)
         self.assertEqual(result.data["window"], "Untitled - Notepad")
+        self.assertTrue(result.data["verified"])
 
     def test_notepad_planner_supplies_correct_target_and_text_arguments(self):
         """Planner strips trailing punctuation from voice transcripts and supplies clean args."""

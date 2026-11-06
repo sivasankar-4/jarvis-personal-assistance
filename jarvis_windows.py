@@ -82,9 +82,14 @@ _SAFE_SHORTCUTS = {
     "ctrl+s": (0x11, 0x53), "ctrl+v": (0x11, 0x56), "ctrl+x": (0x11, 0x58),
     "ctrl+z": (0x11, 0x5A), "alt+tab": (0x12, 0x09), "alt+f4": (0x12, 0x73),
     "win+d": (0x5B, 0x44),
+    "enter": (0x0D,), "tab": (0x09,), "escape": (0x1B,), "backspace": (0x08,),
 }
 _KEYUP = 0x0002
 _KEYEVENTF_UNICODE = 0x0004
+_WM_GETTEXT = 0x000D
+_WM_GETTEXTLENGTH = 0x000E
+_EM_REPLACESEL = 0x00C2
+_EDIT_CONTROL_CLASSES = ("RichEditD2DPT", "RichEdit50W", "RichEdit20W", "Edit")
 _MOUSEEVENTF_LEFTDOWN = 0x0002
 _MOUSEEVENTF_LEFTUP = 0x0004
 _MOUSEEVENTF_RIGHTDOWN = 0x0008
@@ -677,6 +682,50 @@ def verify_window_target(expected_window: str, title: str) -> bool:
     return False
 
 
+def _find_edit_control(hwnd) -> int:
+    """Return the largest visible native text control under hwnd, if any."""
+    try:
+        user32 = ctypes.windll.user32
+        candidates = []
+
+        def consider(candidate):
+            if not user32.IsWindowVisible(candidate):
+                return
+            if _window_class_name(candidate).lower() not in {name.lower() for name in _EDIT_CONTROL_CLASSES}:
+                return
+            rect = _RECT()
+            if not user32.GetWindowRect(candidate, ctypes.byref(rect)):
+                return
+            candidates.append(((rect.right - rect.left) * (rect.bottom - rect.top), candidate))
+
+        consider(hwnd)
+        callback_type = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def callback(child, _lparam):
+            consider(child)
+            return True
+
+        user32.EnumChildWindows(hwnd, callback_type(callback), 0)
+        return max(candidates, default=(0, 0))[1]
+    except (AttributeError, OSError, TypeError):
+        return 0
+
+
+def _get_control_text(hwnd) -> str | None:
+    """Read native edit-control content, or return None when it cannot be read."""
+    try:
+        user32 = ctypes.windll.user32
+        length = user32.SendMessageW(hwnd, _WM_GETTEXTLENGTH, 0, 0)
+        if length < 0:
+            return None
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        if user32.SendMessageW(hwnd, _WM_GETTEXT, length + 1, buffer) < 0:
+            return None
+        return buffer.value
+    except (AttributeError, OSError, TypeError):
+        return None
+
+
 def type_text(text: str, expected_window: str) -> ToolResult:
     """Type explicit text only when the named target is actually focused."""
     if not isinstance(text, str) or not text:
@@ -697,18 +746,20 @@ def type_text(text: str, expected_window: str) -> ToolResult:
         return _result("type_text", False, "Desktop control is available only on Windows.")
 
     try:
-        typed_count = 0
-        for character in text:
-            down = _Input(type=1, ki=_KeyBdInput(0, ord(character), _KEYEVENTF_UNICODE, 0, 0))
-            up = _Input(type=1, ki=_KeyBdInput(0, ord(character), _KEYEVENTF_UNICODE | _KEYUP, 0, 0))
-            if ctypes.windll.user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_Input)) != 1:
-                err = ctypes.GetLastError()
-                raise OSError(f"SendInput key down failed (error code {err})")
-            if ctypes.windll.user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_Input)) != 1:
-                err = ctypes.GetLastError()
-                raise OSError(f"SendInput key up failed (error code {err})")
-            typed_count += 1
-        return _result("type_text", True, f"Typed {typed_count} characters into {title}.", window=title, characters=typed_count)
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        edit = _find_edit_control(hwnd)
+        if not edit:
+            return _result("type_text", False, f"I couldn't find a text area in {title} to type into.")
+        before = _get_control_text(edit)
+        insert_text = text.replace("\n", "\r\n")
+        ctypes.windll.user32.SendMessageW(edit, _EM_REPLACESEL, 1, insert_text)
+        after = _get_control_text(edit)
+        verified = after is not None and text in after.replace("\r\n", "\n")
+        if before is not None and after == before:
+            verified = False
+        if not verified:
+            return _result("type_text", False, "I sent the text but could not confirm it landed correctly.", window=title)
+        return _result("type_text", True, f"Typed {len(text)} characters into {title}.", window=title, characters=len(text), verified=True)
     except (AttributeError, OSError) as exc:
         return _result("type_text", False, f"Windows could not type into {title}: {exc}", window=title, error=str(exc))
 
