@@ -7,6 +7,7 @@ import urllib.parse
 
 import jarvis_policy
 import jarvis_routines
+import jarvis_vision
 import jarvis_windows
 
 
@@ -227,6 +228,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "ask_screen",
+            "description": "Look at the screen with a vision model and answer a question about what is visible — dialogs, error messages, whether an app shows the expected content, reading text in a window. IMPORTANT: this sends a screenshot to the Groq cloud API; the image is not saved locally. Prefer target 'active_window' unless the question needs the whole screen.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "target": {"type": "string", "description": "What to look at: 'active_window' (preferred, shows less) or 'screen' (the whole display)."},
+                },
+                "required": ["question", "target"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delete_file",
             "description": "Move a file or folder to the Windows Recycle Bin. The item stays recoverable from the Recycle Bin; this is NOT permanent deletion. This is a high-risk action and only runs after the user confirms. Use when the user asks to delete or remove a file or folder.",
             "parameters": {
@@ -388,6 +404,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "ask_screen": (jarvis_vision.ask_screen, {"question": str, "target": str}),
     "delete_file": ("delete_file", {"path": str}),
     "save_routine": (jarvis_routines.save_routine, {"name": str, "steps": list}),
     "run_routine": (jarvis_routines.run_routine, {"name": str}),
