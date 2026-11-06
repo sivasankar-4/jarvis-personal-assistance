@@ -56,6 +56,8 @@ _LOW_RISK_TOOLS = {
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
 _MODERATE_RISK_TOOLS = {
+    "write_clipboard",
+    "read_clipboard",
     "locate_element",
     "ask_screen",
     "run_routine",

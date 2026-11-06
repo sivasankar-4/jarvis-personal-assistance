@@ -228,6 +228,25 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "write_clipboard",
+            "description": "Copy text to the Windows clipboard so the user (or a later paste) can use it in any app. Overwrites whatever is currently on the clipboard. Verified by reading the clipboard back.",
+            "parameters": {
+                "type": "object", "properties": {"text": {"type": "string"}},
+                "required": ["text"], "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_clipboard",
+            "description": "Read the text currently on the Windows clipboard. Use when the user refers to something they copied ('what did I copy', 'use what's in my clipboard'). Returns the text, or reports honestly when the clipboard holds no text.",
+            "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "locate_element",
             "description": "Find the on-screen coordinates of a UI element described in words (a button, menu, field, or icon) using a vision model, so it can be clicked with click_and_verify. Sends a screenshot to the Groq cloud API like ask_screen; the image is not saved locally. Returns the element's center coordinates, or honestly reports when the element cannot be found. Prefer target 'active_window' unless the element could be anywhere on screen.",
             "parameters": {
@@ -419,6 +438,8 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),
     "rename_path": ("rename_path", {"source": str, "new_name": str}),
+    "write_clipboard": ("write_clipboard", {"text": str}),
+    "read_clipboard": ("read_clipboard", {}),
     "locate_element": (jarvis_vision.locate_element, {"description": str, "target": str}),
     "ask_screen": (jarvis_vision.ask_screen, {"question": str, "target": str}),
     "delete_file": ("delete_file", {"path": str}),

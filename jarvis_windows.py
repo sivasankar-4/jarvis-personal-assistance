@@ -100,6 +100,8 @@ _FO_DELETE = 0x0003
 _FOF_ALLOWUNDO = 0x0040
 _FOF_NOCONFIRMATION = 0x0010
 _FOF_NOERRORUI = 0x0400
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
 
 
 class _MouseInput(ctypes.Structure):
@@ -172,6 +174,123 @@ class _SHFILEOPSTRUCTW(ctypes.Structure):
 
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+def _open_clipboard() -> bool:
+    for attempt in range(3):
+        if ctypes.windll.user32.OpenClipboard(0):
+            return True
+        if attempt < 2:
+            time.sleep(0.05)
+    return False
+
+
+def _clipboard_prototypes() -> None:
+    """Declare argtypes/restype for every Win32 function used by the clipboard
+    helpers.  Assignments are idempotent; call at the top of each helper."""
+    kernel32 = ctypes.windll.kernel32
+    user32 = ctypes.windll.user32
+
+    kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = ctypes.c_bool
+
+    user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+
+    user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+
+    user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+
+
+def _set_clipboard_text(text: str) -> bool:
+    """Set Unicode clipboard text using movable global memory."""
+    opened = False
+    try:
+        _clipboard_prototypes()
+        if not _open_clipboard():
+            return False
+        opened = True
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if not user32.EmptyClipboard():
+            return False
+        payload = text.encode("utf-16-le") + b"\x00\x00"
+        handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(payload))
+        if not handle:
+            return False
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return False
+        try:
+            ctypes.memmove(pointer, payload, len(payload))
+        finally:
+            kernel32.GlobalUnlock(handle)
+        return bool(user32.SetClipboardData(_CF_UNICODETEXT, handle))
+    except Exception:
+        return False
+    finally:
+        if opened:
+            ctypes.windll.user32.CloseClipboard()
+
+
+def _get_clipboard_text() -> str | None:
+    """Return Unicode clipboard text, or None when it is unavailable."""
+    opened = False
+    try:
+        _clipboard_prototypes()
+        if not _open_clipboard():
+            return None
+        opened = True
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if not user32.IsClipboardFormatAvailable(_CF_UNICODETEXT):
+            return None
+        handle = user32.GetClipboardData(_CF_UNICODETEXT)
+        if not handle:
+            return None
+        pointer = kernel32.GlobalLock(handle)
+        if not pointer:
+            return None
+        try:
+            return ctypes.wstring_at(pointer)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    except Exception:
+        return None
+    finally:
+        if opened:
+            ctypes.windll.user32.CloseClipboard()
+
+
+def write_clipboard(text: str) -> ToolResult:
+    if not _is_windows():
+        return _result("write_clipboard", False, "Desktop control is available only on Windows.")
+    if len(text) > 100000:
+        return _result("write_clipboard", False, "That text is too long to copy (limit 100,000 characters).")
+    if not _set_clipboard_text(text):
+        return _result("write_clipboard", False, "I couldn't open the clipboard.")
+    if _get_clipboard_text() != text:
+        return _result("write_clipboard", False, "I copied the text but could not confirm it is on the clipboard.")
+    message = "Cleared the clipboard." if not text else f"Copied {len(text)} characters to the clipboard."
+    return _result("write_clipboard", True, message, characters=len(text), verified=True)
+
+
+def read_clipboard() -> ToolResult:
+    if not _is_windows():
+        return _result("read_clipboard", False, "Desktop control is available only on Windows.")
+    text = _get_clipboard_text()
+    if text is None:
+        return _result("read_clipboard", False, "The clipboard doesn't contain text right now.")
+    truncated = len(text) > 20000
+    visible = text[:20000] + " […truncated]" if truncated else text
+    return _result("read_clipboard", True, f"Clipboard text ({len(text)} characters): {visible}", characters=len(text), truncated=truncated)
 
 
 def _enable_dpi_awareness() -> bool:
