@@ -3,7 +3,9 @@
 import base64
 import ctypes
 import io
+import json
 import os
+import re
 
 try:
     from PIL import Image, ImageGrab
@@ -50,13 +52,13 @@ def _vision_model() -> str:
     return os.environ.get("JARVIS_VISION_MODEL", "qwen/qwen3.8-27b")
 
 
-def _capture_image(target: str):
-    """Return a PIL Image for target, or None when capture is impossible."""
+def _capture_with_origin(target: str):
+    """Return (PIL Image, origin_x, origin_y) or None when capture is impossible."""
     if ImageGrab is None:
         return None
     try:
         if target == "screen":
-            return ImageGrab.grab()
+            return ImageGrab.grab(), 0, 0
         if target != "active_window":
             return None
         hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -67,9 +69,15 @@ def _capture_image(target: str):
             return None
         if rect.right <= rect.left or rect.bottom <= rect.top:
             return None
-        return ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom))
+        return ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom)), rect.left, rect.top
     except Exception:
         return None
+
+
+def _capture_image(target: str):
+    """Return a PIL Image for target, or None when capture is impossible."""
+    captured = _capture_with_origin(target)
+    return captured[0] if captured else None
 
 
 def ask_screen(question: str, target: str) -> ToolResult:
@@ -119,3 +127,72 @@ def ask_screen(question: str, target: str) -> ToolResult:
     if not answer:
         return ToolResult(False, "The vision model returned no answer.")
     return ToolResult(True, answer, {"target": target, "model": _vision_model()})
+
+
+def locate_element(description: str, target: str) -> ToolResult:
+    if target not in ("screen", "active_window"):
+        return ToolResult(False, "I can look at 'screen' or 'active_window'.")
+    if not isinstance(description, str) or not description.strip():
+        return ToolResult(False, "I need a description of the element to find.")
+    if os.name != "nt":
+        return ToolResult(False, "Vision is available only on Windows.")
+
+    captured = _capture_with_origin(target)
+    if captured is None:
+        message = "I couldn't capture the active window." if target == "active_window" else "I couldn't capture the screen."
+        return ToolResult(False, message)
+    if len(captured) == 2:
+        image, (origin_x, origin_y) = captured
+    else:
+        image, origin_x, origin_y = captured
+    img_w, img_h = image.size
+    if not _get_api_key():
+        return ToolResult(False, "Vision needs a Groq API key (set GROQ_API_KEY or the Jarvis key file).")
+    try:
+        client = _get_client()
+    except ValueError:
+        return ToolResult(False, "Vision needs a Groq API key (set GROQ_API_KEY or the Jarvis key file).")
+    except Exception:
+        return ToolResult(False, "I couldn't reach the vision service.")
+
+    image = image.convert("RGB")
+    if max(img_w, img_h) > 1280:
+        scale = 1280 / max(img_w, img_h)
+        image = image.resize((round(img_w * scale), round(img_h * scale)), Image.LANCZOS)
+    encoded = io.BytesIO()
+    image.save(encoded, format="JPEG", quality=70)
+    data_uri = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+    try:
+        response = client.chat.completions.create(
+            model=_vision_model(),
+            messages=[
+                {"role": "system", "content": "You are the eyes of a desktop assistant. You locate UI elements in screenshots."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": f"Find the center of this element: {description}. Reply with ONLY a JSON object {{\"x\": <int>, \"y\": <int>}} with coordinates on a 0-1000 scale relative to image width and height. If the element is not present, reply {{\"x\": -1, \"y\": -1}}."},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ]},
+            ],
+            max_completion_tokens=100,
+        )
+        content = response.choices[0].message.content or ""
+    except Exception as exc:
+        return ToolResult(False, f"I couldn't locate that ({type(exc).__name__}).")
+    match = re.search(r"\{.*?\}", content, re.DOTALL)
+    if not match:
+        return ToolResult(False, "The vision model returned an answer I couldn't use.")
+    try:
+        coordinates = json.loads(match.group(0))
+        raw_x, raw_y = coordinates["x"], coordinates["y"]
+        if isinstance(raw_x, bool) or isinstance(raw_y, bool) or not isinstance(raw_x, (int, float)) or not isinstance(raw_y, (int, float)):
+            raise ValueError("invalid coordinates")
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return ToolResult(False, "The vision model returned an answer I couldn't use.")
+    if raw_x < 0 or raw_y < 0:
+        return ToolResult(False, f"I couldn't find '{description}' on the screen.")
+    x_img = min(max(round(raw_x / 1000 * img_w), 0), img_w - 1)
+    y_img = min(max(round(raw_y / 1000 * img_w), 0), img_h - 1)
+    x, y = origin_x + x_img, origin_y + y_img
+    return ToolResult(
+        True, f"Found '{description}' at approximately ({x}, {y}).",
+        {"x": x, "y": y, "target": target, "model": _vision_model()},
+    )

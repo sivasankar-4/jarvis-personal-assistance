@@ -56,6 +56,7 @@ _LOW_RISK_TOOLS = {
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
 _MODERATE_RISK_TOOLS = {
+    "locate_element",
     "ask_screen",
     "run_routine",
     "delete_routine",
