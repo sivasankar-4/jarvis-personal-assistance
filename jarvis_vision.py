@@ -8,9 +8,10 @@ import os
 import re
 
 try:
-    from PIL import Image, ImageGrab
+    from PIL import Image, ImageDraw, ImageGrab
 except ImportError:
     Image = None
+    ImageDraw = None
     ImageGrab = None
 
 from openai import OpenAI
@@ -145,7 +146,8 @@ def locate_element(description: str, target: str) -> ToolResult:
         image, (origin_x, origin_y) = captured
     else:
         image, origin_x, origin_y = captured
-    img_w, img_h = image.size
+    original_image = image
+    img_w, img_h = original_image.size
     if not _get_api_key():
         return ToolResult(False, "Vision needs a Groq API key (set GROQ_API_KEY or the Jarvis key file).")
     try:
@@ -159,6 +161,7 @@ def locate_element(description: str, target: str) -> ToolResult:
     if max(img_w, img_h) > 1280:
         scale = 1280 / max(img_w, img_h)
         image = image.resize((round(img_w * scale), round(img_h * scale)), Image.LANCZOS)
+    sent_image = image
     encoded = io.BytesIO()
     image.save(encoded, format="JPEG", quality=70)
     data_uri = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
@@ -191,8 +194,38 @@ def locate_element(description: str, target: str) -> ToolResult:
         return ToolResult(False, f"I couldn't find '{description}' on the screen.")
     x_img = min(max(round(raw_x / 1000 * img_w), 0), img_w - 1)
     y_img = min(max(round(raw_y / 1000 * img_w), 0), img_h - 1)
+    scale = sent_image.width / img_w
+    mx, my = x_img * scale, y_img * scale
+    marked_image = sent_image.copy()
+    marker = ImageDraw.Draw(marked_image)
+    marker.ellipse((mx - 22, my - 22, mx + 22, my + 22), outline=(255, 0, 0), width=4)
+    marker.line((mx - 15, my, mx + 15, my), fill=(255, 0, 0), width=4)
+    marker.line((mx, my - 15, mx, my + 15), fill=(255, 0, 0), width=4)
+    marker_buffer = io.BytesIO()
+    marked_image.save(marker_buffer, format="JPEG", quality=70)
+    marker_uri = "data:image/jpeg;base64," + base64.b64encode(marker_buffer.getvalue()).decode("ascii")
+    try:
+        confirmation = client.chat.completions.create(
+            model=_vision_model(),
+            messages=[
+                {"role": "system", "content": "You verify UI element locations in screenshots. Answer with exactly one word."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": f"A red circle marks a location in this screenshot. Is the circled location on {description}? Reply with ONLY the word YES or NO."},
+                    {"type": "image_url", "image_url": {"url": marker_uri}},
+                ]},
+            ],
+            max_completion_tokens=10,
+        )
+        confirmed = (confirmation.choices[0].message.content or "").strip().upper().startswith("YES")
+    except Exception:
+        confirmed = False
+    if not confirmed:
+        return ToolResult(
+            False, f"I couldn't confirm '{description}' is really there, so I won't guess.",
+            {"target": target, "model": _vision_model()},
+        )
     x, y = origin_x + x_img, origin_y + y_img
     return ToolResult(
         True, f"Found '{description}' at approximately ({x}, {y}).",
-        {"x": x, "y": y, "target": target, "model": _vision_model()},
+        {"x": x, "y": y, "target": target, "model": _vision_model(), "confirmed": True},
     )
