@@ -135,6 +135,16 @@ def validate_plan(steps: list[TaskStep]) -> tuple[bool, str]:
         # 1. Tool existence check
         if step.tool_name not in jarvis_tools._TOOLS:
             return False, f"Tool '{step.tool_name}' is not a registered desktop tool."
+        if step.tool_name == "click_at":
+            return False, (
+                f"Step '{step.step_id}': plans may use click_and_verify, not click_at — "
+                "every plan click must verify its own effect."
+            )
+        if step.tool_name in ("ask_screen", "take_screenshot"):
+            return False, (
+                f"Step '{step.step_id}': '{step.tool_name}' is an observation tool "
+                "and cannot be a plan step."
+            )
 
         _, allowed_types = jarvis_tools._TOOLS[step.tool_name]
 
@@ -375,6 +385,27 @@ def verify_step_result(step: TaskStep, tool_result: jarvis_windows.ToolResult) -
     if tool == "close_application":
         return "VERIFIED", f"Application '{data.get('app', 'target')}' closed."
 
+    if tool == "click_and_verify":
+        pixel_changed = data.get("changed") is True
+        window_changed = (
+            "foreground_before" in data
+            and data.get("foreground_after") != data.get("foreground_before")
+        )
+        evidence = []
+        if pixel_changed:
+            evidence.append(f"Click changed {data.get('changed_percent')}% of the screen.")
+        if window_changed:
+            evidence.append(
+                f"Active window changed from '{data.get('foreground_before')}' "
+                f"to '{data.get('foreground_after')}'."
+            )
+        if evidence:
+            return "VERIFIED", " ".join(evidence)
+        return "FAILED", (
+            "Click executed but produced no visible change "
+            "(no screen change detected and the active window did not change)."
+        )
+
     return "VERIFIED", "Operation confirmed by tool result."
 
 
@@ -494,7 +525,7 @@ def execute_task(task: Task, resume_step_approved: bool = False) -> str:
         }
         step.verification_status = ver_status
 
-        if tool_result.ok:
+        if tool_result.ok and ver_status != "FAILED":
             step.status = StepStatus.COMPLETED
             task.current_step_index += 1
             resume_step_approved = False  # Reset approval for subsequent steps
@@ -507,7 +538,10 @@ def execute_task(task: Task, resume_step_approved: bool = False) -> str:
 
             any_completed = any(s.status == StepStatus.COMPLETED for s in task.steps)
             task.status = TaskStatus.PARTIALLY_COMPLETED if any_completed else TaskStatus.FAILED
-            task.error = f"Step '{step.description}' failed: {tool_result.message}"
+            if tool_result.ok:
+                task.error = f"Step '{step.description}' failed verification: {evidence}"
+            else:
+                task.error = f"Step '{step.description}' failed: {tool_result.message}"
             break
 
     # Final outcome determination
