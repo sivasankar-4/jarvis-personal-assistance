@@ -878,6 +878,11 @@ def _text_fallback_loop():
 
 
 def listen_loop():
+    try:
+        import jarvis_routines
+        jarvis_routines.start_scheduler()
+    except Exception:
+        pass
     recognizer = apply_recognizer_settings(sr.Recognizer())
     mic = open_microphone()
     if mic is None:

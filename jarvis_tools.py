@@ -340,6 +340,43 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "set_routine_schedule",
+            "description": (
+                "Give a saved routine a schedule so it runs by itself while Jarvis is running. "
+                "kind is 'daily' (pass date as an empty string) or 'once' (date as YYYY-MM-DD). "
+                "time is 24-hour HH:MM — convert the user's words ('9 pm' becomes '21:00', "
+                "'tomorrow at 8' becomes kind 'once' with tomorrow's date and '08:00'). "
+                "One schedule per routine; setting one replaces the old."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "time": {"type": "string"},
+                    "date": {"type": "string"},
+                },
+                "required": ["name", "kind", "time", "date"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_routine_schedule",
+            "description": "Remove a routine's schedule so it no longer runs by itself. The routine itself is kept.",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "click_and_verify",
             "description": "Click at screen coordinates and then check whether the screen visibly changed: captures a screenshot before and after the click and reports the changed region, its size, and any foreground-window change. Prefer this over click_at when you need to know whether the click had an effect. It reports WHAT changed, not whether the change was the intended one.",
             "parameters": {
@@ -496,6 +533,8 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "run_routine": (jarvis_routines.run_routine, {"name": str}),
     "list_routines": (jarvis_routines.list_routines, {}),
     "delete_routine": (jarvis_routines.delete_routine, {"name": str}),
+    "set_routine_schedule": (jarvis_routines.set_routine_schedule, {"name": str, "kind": str, "time": str, "date": str}),
+    "clear_routine_schedule": (jarvis_routines.clear_routine_schedule, {"name": str}),
     "click_and_verify": ("click_and_verify", {"x": int, "y": int, "button": str, "clicks": int}),
     "click_at": ("click_at", {"x": int, "y": int, "button": str, "clicks": int}),
     "take_screenshot": ("take_screenshot", {"target": str}),

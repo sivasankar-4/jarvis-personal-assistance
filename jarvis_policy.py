@@ -52,6 +52,8 @@ _LOW_RISK_TOOLS = {
     "save_routine",
     "list_routines",
     "adjust_volume",
+    "set_routine_schedule",
+    "clear_routine_schedule",
 }
 
 # Moderate-risk tools: autonomous execution with strict target validation safeguards
