@@ -140,7 +140,7 @@ def validate_plan(steps: list[TaskStep]) -> tuple[bool, str]:
                 f"Step '{step.step_id}': plans may use click_and_verify, not click_at — "
                 "every plan click must verify its own effect."
             )
-        if step.tool_name in ("ask_screen", "take_screenshot", "locate_element", "read_clipboard"):
+        if step.tool_name in ("ask_screen", "take_screenshot", "locate_element", "read_clipboard", "read_file", "search_code"):
             return False, (
                 f"Step '{step.step_id}': '{step.tool_name}' is an observation tool "
                 "and cannot be a plan step."

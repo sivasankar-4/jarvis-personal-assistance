@@ -397,6 +397,53 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read a text or code file and return its lines with line numbers. "
+                "Read-only: never modifies anything. "
+                "Pass start_line 1 and max_lines 200 unless the user asks for a specific range. "
+                "Refuses secrets files (.env, keys), databases, binaries, and files over 200 KB; "
+                "content is capped at 20,000 characters."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Absolute or relative path to the file."},
+                    "start_line": {"type": "integer", "description": "First line to return (1-based). Pass 1 by default."},
+                    "max_lines": {"type": "integer", "description": "Maximum number of lines to return (1-1000). Pass 200 by default."},
+                },
+                "required": ["path", "start_line", "max_lines"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_code",
+            "description": (
+                "Search file contents for an exact piece of text "
+                "(case-insensitive, literal -- not regex) in a folder and its subfolders. "
+                "Read-only. "
+                "Pass directory as an empty string to search the current project folder, "
+                "and max_matches 25 unless the user asks for fewer. "
+                "Returns file:line matches."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Literal text to search for (case-insensitive)."},
+                    "directory": {"type": "string", "description": "Folder to search. Pass an empty string to search the current project folder."},
+                    "max_matches": {"type": "integer", "description": "Maximum matches to return (1-25). Pass 25 by default."},
+                },
+                "required": ["query", "directory", "max_matches"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -433,7 +480,9 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "send_shortcut": ("send_shortcut", {"shortcut": str}),
     "type_text": ("type_text", {"text": str, "expected_window": str}),
     "close_application": ("close_application", {"name": str}),
-    "find_files": ("find_files", {"query": str, "directory": str}),
+    "read_file": ("read_file", {"path": str, "start_line": int, "max_lines": int}),
+    "search_code": ("search_code", {"query": str, "directory": str, "max_matches": int}),
+        "find_files": ("find_files", {"query": str, "directory": str}),
     "create_folder": ("create_folder", {"path": str}),
     "move_path": ("move_path", {"source": str, "destination": str}),
     "copy_path": ("copy_path", {"source": str, "destination": str}),

@@ -58,6 +58,8 @@ _LOW_RISK_TOOLS = {
 _MODERATE_RISK_TOOLS = {
     "write_clipboard",
     "read_clipboard",
+    "read_file",
+    "search_code",
     "locate_element",
     "ask_screen",
     "run_routine",

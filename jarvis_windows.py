@@ -935,6 +935,174 @@ def find_files(query: str, directory: str) -> ToolResult:
     )
 
 
+# -- Code-inspection constants ------------------------------------------------
+_READABLE_EXTENSIONS = {
+    ".py", ".md", ".txt", ".json", ".toml", ".ini", ".cfg", ".bat",
+    ".ps1", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".yaml",
+    ".yml", ".log", ".csv",
+}
+_READABLE_BARE_NAMES = {
+    "readme", "license", "dockerfile", "makefile",
+    "requirements.txt", ".gitignore",
+}
+_MAX_READ_BYTES = 200_000
+_MAX_MESSAGE_CHARS = 20_000
+
+
+def _is_denied_name(path):
+    name = path.name.lower()
+    return (
+        name.startswith(".env")
+        or name.endswith(".key")
+        or name.endswith(".pem")
+        or name.endswith(".p12")
+        or name.endswith(".pfx")
+        or name.endswith(".db")
+        or ".sqlite" in name
+        or name.startswith("credentials")
+        or "secret" in name
+        or name == "free.key"
+        or name == "actions.jsonl"
+    )
+
+
+def _is_readable_name(path):
+    name = path.name.lower()
+    ext = path.suffix.lower()
+    if ext in _READABLE_EXTENSIONS:
+        return True
+    if name in _READABLE_BARE_NAMES:
+        return True
+    for prefix in ("readme", "license"):
+        if name == prefix or name.startswith(prefix + "."):
+            return True
+    return False
+
+
+def read_file(path: str, start_line: int = 1, max_lines: int = 200) -> ToolResult:
+    try:
+        resolved = validate_path(path)
+    except (OSError, ValueError):
+        return _result("read_file", False, f"I couldn't find '{path}'.")
+    if resolved.is_dir():
+        return _result("read_file", False, "That is a folder, not a file.")
+    if _is_denied_name(resolved):
+        return _result("read_file", False, "I don't read that kind of file.")
+    if not _is_readable_name(resolved):
+        return _result("read_file", False, "That file type isn't readable as text.")
+    try:
+        raw = resolved.read_bytes()
+    except OSError:
+        return _result("read_file", False, "I couldn't read that file.")
+    if len(raw) > _MAX_READ_BYTES:
+        return _result(
+            "read_file", False,
+            f"That file is too large to read ({len(raw)} bytes; limit 200,000).",
+        )
+    if b"\x00" in raw[:8192]:
+        return _result("read_file", False, "That file isn't plain text.")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return _result("read_file", False, "That file isn't plain text.")
+    lines = text.splitlines()
+    total = len(lines)
+    start = max(1, start_line)
+    limit = min(max(1, max_lines), 1000)
+    if start > total:
+        return _result("read_file", False, f"That file only has {total} lines.")
+    window = lines[start - 1 : start - 1 + limit]
+    numbered = "\n".join(f"{start + i}: {line}" for i, line in enumerate(window))
+    truncated_flag = len(numbered) > _MAX_MESSAGE_CHARS
+    visible = numbered[:_MAX_MESSAGE_CHARS] + " […truncated]" if truncated_flag else numbered
+    message = f"{resolved.name} lines {start}–{start + len(window) - 1} of {total}:\n{visible}"
+    return _result(
+        "read_file", True, message,
+        name=resolved.name,
+        start_line=start,
+        lines=len(window),
+        characters=len(numbered),
+        truncated=truncated_flag,
+    )
+
+
+def search_code(query: str, directory: str = "", max_matches: int = 25) -> ToolResult:
+    if not isinstance(query, str) or not query.strip():
+        return _result("search_code", False, "Please tell me what to search for.")
+    if not isinstance(directory, str) or not directory.strip():
+        search_dir = Path.cwd()
+    else:
+        try:
+            search_dir = validate_path(directory)
+        except (OSError, ValueError):
+            return _result("search_code", False, f"I couldn't find the folder {directory}.")
+        if not search_dir.is_dir():
+            return _result("search_code", False, f"{search_dir.name} is not a folder.")
+    cap = min(max(1, max_matches), 25)
+    needle = query.strip().lower()
+    skip_dirs = {"__pycache__", "node_modules"}
+    scanned = 0
+    matches = []
+    done = False
+    for root, dirs, files in os.walk(search_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for fname in files:
+            if done:
+                break
+            scanned += 1
+            if scanned > 500:
+                done = True
+                break
+            fpath = Path(root) / fname
+            if _is_denied_name(fpath):
+                continue
+            if not _is_readable_name(fpath):
+                continue
+            try:
+                size = fpath.stat().st_size
+            except OSError:
+                continue
+            if size > _MAX_READ_BYTES:
+                continue
+            try:
+                raw = fpath.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw[:8192]:
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if needle in line.lower():
+                    matches.append((fpath, lineno, line.strip()[:200]))
+                    if len(matches) >= cap:
+                        done = True
+                        break
+        if done:
+            break
+    if not matches:
+        return _result(
+            "search_code", False,
+            f"I couldn't find '{query}' in {search_dir.name}.",
+        )
+    count = len(matches)
+    noun = "matches" if count != 1 else "match"
+    lines_out = [f"Found {count} {noun} for '{query}' in {search_dir.name}:"]
+    for fpath, lineno, text in matches[:10]:
+        lines_out.append(f"{fpath}:{lineno}: {text}")
+    if count > 10:
+        lines_out.append(f"+{count - 10} more.")
+    unique_names = sorted({Path(fpath).name for fpath, _, _ in matches})
+    return _result(
+        "search_code", True, "\n".join(lines_out),
+        count=count,
+        files=unique_names,
+        truncated=(count >= cap),
+    )
+
+
 def create_folder(path: str) -> ToolResult:
     """Create a single new folder. Does not create intermediate directories."""
     if not isinstance(path, str) or not path.strip() or "\x00" in path:
