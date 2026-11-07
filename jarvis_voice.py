@@ -426,6 +426,146 @@ def _speak_with_pyttsx3(text):
     _diag("[TTS]: playback finished")
 
 
+_TTS_KEYFILE = os.path.expanduser("~/.openjarvis/free.key")
+_ORPHEUS_VOICES = {"autumn", "diana", "hannah", "austin", "daniel", "troy"}
+_groq_tts_client = None
+_orpheus_cooldown_until = 0.0
+
+
+def _split_for_tts(text: str) -> list[str]:
+    """Split text into chunks of at most 200 characters, respecting sentence/word boundaries."""
+    if not text or not text.strip():
+        return []
+
+    raw_sentences = re.split(r'(?<=[.!?])\s+|\r?\n+', text.strip())
+    sentences = [" ".join(s.split()) for s in raw_sentences if s.strip()]
+    if not sentences:
+        return []
+
+    units = []
+    for s in sentences:
+        if len(s) <= 200:
+            units.append(s)
+        else:
+            rem = s
+            while len(rem) > 200:
+                idx = rem[:200].rfind(" ")
+                if len(rem) > 200 and rem[200] == " ":
+                    idx = 200
+                if idx != -1:
+                    chunk = rem[:idx].strip()
+                    rem = rem[idx:].strip()
+                else:
+                    chunk = rem[:200].strip()
+                    rem = rem[200:].strip()
+                if chunk:
+                    units.append(chunk)
+            if rem.strip():
+                units.append(rem.strip())
+
+    chunks = []
+    current = ""
+    for u in units:
+        if not current:
+            current = u
+        elif len(current) + 1 + len(u) <= 200:
+            current = current + " " + u
+        else:
+            chunks.append(current)
+            current = u
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def _tts_api_key() -> str | None:
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if api_key:
+        return api_key
+    if os.path.exists(_TTS_KEYFILE):
+        try:
+            with open(_TTS_KEYFILE, encoding="utf-8") as key_file:
+                return key_file.read().strip() or None
+        except Exception:
+            return None
+    return None
+
+
+def _tts_client():
+    global _groq_tts_client
+    api_key = _tts_api_key()
+    if not api_key:
+        return None
+    if _groq_tts_client is None:
+        try:
+            from openai import OpenAI
+            _groq_tts_client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+        except Exception:
+            return None
+    return _groq_tts_client
+
+
+def _tts_model() -> str:
+    return os.environ.get("JARVIS_TTS_MODEL", "").strip() or "canopylabs/orpheus-v1-english"
+
+
+def _tts_voice() -> str:
+    voice = os.environ.get("JARVIS_TTS_VOICE", "").strip().lower()
+    return voice if voice in _ORPHEUS_VOICES else "troy"
+
+
+def _play_wav(data: bytes) -> None:
+    import tempfile
+    import winsound
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        winsound.PlaySound(path, winsound.SND_FILENAME)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _purge_playback() -> None:
+    try:
+        import winsound
+        winsound.PlaySound(None, winsound.SND_PURGE)
+    except Exception:
+        pass
+
+
+def _response_bytes(response) -> bytes:
+    if hasattr(response, "read") and callable(response.read):
+        return response.read()
+    if hasattr(response, "content"):
+        return response.content
+    return bytes(response)
+
+
+def _speak_with_orpheus(text: str) -> bool:
+    client = _tts_client()
+    if client is None:
+        return False
+    for chunk in _split_for_tts(text):
+        if _stop_event.is_set():
+            return True
+        try:
+            response = client.audio.speech.create(
+                model=_tts_model(),
+                voice=_tts_voice(),
+                input=chunk,
+                response_format="wav",
+            )
+            _play_wav(_response_bytes(response))
+        except Exception:
+            return False
+    return True
+
+
 def request_tts_stop():
     """
     Signal the active TTS to stop immediately.
@@ -435,6 +575,7 @@ def request_tts_stop():
     Pending approval state is NOT touched.
     """
     _stop_event.set()
+    _purge_playback()
     engine = _tts_engine
     if engine is not None:
         try:
@@ -458,7 +599,7 @@ def _run_tts_background(text: str) -> None:
     engine.stop() purges the speech queue and runAndWait() returns, so this
     thread exits cleanly.
     """
-    global _tts_lock
+    global _tts_lock, _orpheus_cooldown_until
     if sys.platform == "darwin":
         proc = subprocess.Popen(["say", "-v", "Samantha", text])
         # Poll so the stop event can terminate the subprocess.
@@ -471,18 +612,26 @@ def _run_tts_background(text: str) -> None:
         return
 
     try:
-        _speak_with_pyttsx3(text)
-    except Exception as exc:
-        print(f"[TTS]: playback failed ({type(exc).__name__}: {exc}). Retrying with a new engine.")
-        _discard_tts_engine()
+        engine = os.environ.get("JARVIS_TTS_ENGINE", "orpheus").strip().lower()
+        if engine != "local" and time.time() >= _orpheus_cooldown_until:
+            if _speak_with_orpheus(text):
+                return
+            _orpheus_cooldown_until = time.time() + 300
+            print("[TTS]: natural voice unavailable; using the local voice.")
+
         try:
             _speak_with_pyttsx3(text)
-        except Exception as retry_exc:
-            print(
-                f"[TTS]: retry failed ({type(retry_exc).__name__}: {retry_exc}). "
-                "The reply is in the console above."
-            )
+        except Exception as exc:
+            print(f"[TTS]: playback failed ({type(exc).__name__}: {exc}). Retrying with a new engine.")
             _discard_tts_engine()
+            try:
+                _speak_with_pyttsx3(text)
+            except Exception as retry_exc:
+                print(
+                    f"[TTS]: retry failed ({type(retry_exc).__name__}: {retry_exc}). "
+                    "The reply is in the console above."
+                )
+                _discard_tts_engine()
     finally:
         _tts_lock = False
         if sys.platform != "darwin":
