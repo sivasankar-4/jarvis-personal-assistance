@@ -456,9 +456,18 @@ def _discard_tts_engine_worker() -> None:
             engine.stop()
         except Exception:
             pass
+        try:
+            del engine
+        except Exception:
+            pass
     try:
         import pyttsx3
         pyttsx3._activeEngines.clear()
+    except Exception:
+        pass
+    try:
+        import gc
+        gc.collect()
     except Exception:
         pass
 
@@ -1123,6 +1132,7 @@ def listen_loop():
             follow_up_response = jarvis_brain.think(interrupted_with)
             _interruptible_speak(follow_up_response)
 
+    speak("Hi boss, welcome back. Jarvis is online and ready to assist you.")
     print("Listening...", flush=True)
     idle_cycles = 0
     while True:
