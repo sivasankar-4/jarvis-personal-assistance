@@ -379,9 +379,34 @@ def capture_command(
 # TTS engine management
 # ---------------------------------------------------------------------------
 
+# _dispatch_pyttsx3 blocks until pyttsx3's runAndWait() finishes — that is full
+# synthesis + audio playback for the entire text, not just engine initialisation.
+# A generous upper bound: at ~130 wpm (SAPI5's default rate) a 500-word reply
+# takes ~230 s.  Round up to 300 s (5 min) to cover any unexpectedly long reply
+# while still guaranteeing the caller is not blocked forever if the driver hangs.
+_TTS_DISPATCH_TIMEOUT: float = 300.0
+_TTS_CONTROL_TIMEOUT: float = 2.0
+
 _speech_queue: queue.Queue = queue.Queue()
 _speech_thread: threading.Thread | None = None
 _speech_thread_lock = threading.Lock()
+
+
+class _SpeechControl:
+    """Control message sent to the dedicated speech worker thread."""
+
+    def __init__(self, action: str, done_event: threading.Event | None = None):
+        self.action = action
+        self.done_event = done_event
+
+
+class _SpeechUtterance:
+    """Utterance payload sent to the dedicated speech worker thread."""
+
+    def __init__(self, text: str, done_event: threading.Event, err_holder: list[Exception]):
+        self.text = text
+        self.done_event = done_event
+        self.err_holder = err_holder
 
 
 def _ensure_speech_thread() -> threading.Thread:
@@ -410,44 +435,19 @@ def _stop_speech_worker() -> None:
 atexit.register(_stop_speech_worker)
 
 
-def _speech_worker_loop() -> None:
-    has_com = False
-    try:
-        import pythoncom
-        pythoncom.CoInitialize()
-        has_com = True
-    except Exception:
-        has_com = False
-
-    try:
-        while True:
-            item = _speech_queue.get()
-            if item is None:
-                _speech_queue.task_done()
-                break
-            text, done_event, err_holder = item
-            try:
-                if _stop_event.is_set():
-                    _diag("[TTS]: speech worker abandoning stopped utterance")
-                else:
-                    _speak_with_pyttsx3(text)
-            except Exception as exc:
-                err_holder.append(exc)
-            finally:
-                done_event.set()
-                _speech_queue.task_done()
-    finally:
-        _discard_tts_engine()
-        if has_com:
-            try:
-                import pythoncom
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+def _stop_engine_worker() -> None:
+    """Stop the SAPI5 engine on the worker thread."""
+    global _tts_engine
+    engine = _tts_engine
+    if engine is not None:
+        try:
+            engine.stop()
+        except Exception:
+            pass
 
 
-def _discard_tts_engine():
-    """Drop the SAPI5 engine so the next utterance gets a fresh COM voice."""
+def _discard_tts_engine_worker() -> None:
+    """Discard the SAPI5 engine on the worker thread."""
     global _tts_engine
     engine = _tts_engine
     _tts_engine = None
@@ -463,6 +463,81 @@ def _discard_tts_engine():
         pass
 
 
+def _speech_worker_loop() -> None:
+    has_com = False
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        has_com = True
+    except Exception:
+        has_com = False
+
+    try:
+        while True:
+            item = _speech_queue.get()
+            if item is None:
+                _speech_queue.task_done()
+                break
+
+            if isinstance(item, _SpeechControl):
+                try:
+                    if item.action == "stop":
+                        _stop_engine_worker()
+                    elif item.action == "discard":
+                        _discard_tts_engine_worker()
+                finally:
+                    if item.done_event is not None:
+                        item.done_event.set()
+                    _speech_queue.task_done()
+                continue
+
+            if isinstance(item, _SpeechUtterance):
+                text, done_event, err_holder = item.text, item.done_event, item.err_holder
+            else:
+                text, done_event, err_holder = item
+
+            try:
+                if _stop_event.is_set():
+                    _diag("[TTS]: speech worker abandoning stopped utterance")
+                else:
+                    _speak_with_pyttsx3(text)
+            except Exception as exc:
+                err_holder.append(exc)
+            finally:
+                done_event.set()
+                _speech_queue.task_done()
+    finally:
+        _discard_tts_engine_worker()
+        if has_com:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+
+def _discard_tts_engine():
+    """Drop the SAPI5 engine on the speech worker thread so the next utterance gets a fresh COM voice."""
+    global _speech_thread, _tts_engine
+    if threading.current_thread() == _speech_thread:
+        _discard_tts_engine_worker()
+        return
+
+    with _speech_thread_lock:
+        worker_alive = _speech_thread is not None and _speech_thread.is_alive()
+
+    if not worker_alive:
+        _discard_tts_engine_worker()
+        return
+
+    done_event = threading.Event()
+    ctrl = _SpeechControl("discard", done_event)
+    _speech_queue.put(ctrl)
+    if not done_event.wait(timeout=_TTS_CONTROL_TIMEOUT):
+        _diag("[TTS]: worker discard timed out; executing fallback discard")
+        _discard_tts_engine_worker()
+
+
 def _new_tts_engine():
     """
     Create a new pyttsx3 engine.
@@ -474,7 +549,7 @@ def _new_tts_engine():
     global _tts_engine
     import pyttsx3
 
-    _discard_tts_engine()
+    _discard_tts_engine_worker()
     engine = pyttsx3.init()
     try:
         volume = engine.getProperty("volume")
@@ -483,6 +558,27 @@ def _new_tts_engine():
             _diag("[TTS]: engine volume was low; restored to 1.0")
     except Exception:
         pass
+
+    try:
+        def _on_word(name, location, length):
+            if _stop_event.is_set():
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
+
+        def _on_utterance(name):
+            if _stop_event.is_set():
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
+
+        engine.connect("started-word", _on_word)
+        engine.connect("started-utterance", _on_utterance)
+    except Exception:
+        pass
+
     _tts_engine = engine
     return engine
 
@@ -491,8 +587,9 @@ def _dispatch_pyttsx3(text: str) -> None:
     _ensure_speech_thread()
     done_event = threading.Event()
     err_holder: list[Exception] = []
-    _speech_queue.put((text, done_event, err_holder))
-    done_event.wait()
+    _speech_queue.put(_SpeechUtterance(text, done_event, err_holder))
+    if not done_event.wait(timeout=_TTS_DISPATCH_TIMEOUT):
+        raise TimeoutError(f"pyttsx3 speech dispatch timed out after {_TTS_DISPATCH_TIMEOUT}s")
     if err_holder:
         raise err_holder[0]
 
@@ -500,6 +597,9 @@ def _dispatch_pyttsx3(text: str) -> None:
 def _speak_with_pyttsx3(text):
     if threading.current_thread() != _speech_thread:
         _dispatch_pyttsx3(text)
+        return
+    if _stop_event.is_set():
+        _diag("[TTS]: speech worker abandoning stopped utterance")
         return
     engine = _new_tts_engine()
     _diag(f"[TTS]: speaking {len(text)} characters")
@@ -651,19 +751,39 @@ def _speak_with_orpheus(text: str) -> bool:
 def request_tts_stop():
     """
     Signal the active TTS to stop immediately.
-    Calls engine.stop() on the SAPI5 engine, which purges its speech queue
-    and causes the blocked runAndWait() in the TTS thread to return promptly.
+    Sets _stop_event, purges playback, and requests the speech worker thread
+    to stop the engine on its dedicated thread.
     Safe to call from any thread even if no TTS is active.
     Pending approval state is NOT touched.
     """
     _stop_event.set()
     _purge_playback()
-    engine = _tts_engine
-    if engine is not None:
-        try:
-            engine.stop()
-        except Exception:
-            pass
+
+    if threading.current_thread() == _speech_thread:
+        _stop_engine_worker()
+        return
+
+    with _speech_thread_lock:
+        worker_alive = _speech_thread is not None and _speech_thread.is_alive()
+
+    # If an engine was explicitly set (e.g. in tests) but the worker is not running,
+    # start the worker so the stop executes on the jarvis-speech-worker thread.
+    if _tts_engine is not None and not worker_alive:
+        _ensure_speech_thread()
+        worker_alive = True
+
+    if worker_alive:
+        done_event = threading.Event()
+        ctrl = _SpeechControl("stop", done_event)
+        _speech_queue.put(ctrl)
+        if not done_event.wait(timeout=_TTS_CONTROL_TIMEOUT):
+            _diag("[TTS]: worker stop timed out; attempting fallback stop")
+            engine = _tts_engine
+            if engine is not None:
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
 
 
 def is_tts_active() -> bool:
@@ -1036,9 +1156,6 @@ def listen_loop():
             print(f"\n[Notice]: {e}")
             time.sleep(0.5)
             print("Listening...", flush=True)
-
-
-_ensure_speech_thread()
 
 
 if __name__ == "__main__":
