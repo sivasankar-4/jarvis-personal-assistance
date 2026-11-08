@@ -17,8 +17,10 @@ Microphone ownership model (single consumer at a time):
   Only one context is active at any moment; they never overlap.
 """
 
+import atexit
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -377,6 +379,73 @@ def capture_command(
 # TTS engine management
 # ---------------------------------------------------------------------------
 
+_speech_queue: queue.Queue = queue.Queue()
+_speech_thread: threading.Thread | None = None
+_speech_thread_lock = threading.Lock()
+
+
+def _ensure_speech_thread() -> threading.Thread:
+    global _speech_thread
+    with _speech_thread_lock:
+        if _speech_thread is None or not _speech_thread.is_alive():
+            t = threading.Thread(
+                target=_speech_worker_loop,
+                daemon=True,
+                name="jarvis-speech-worker",
+            )
+            _speech_thread = t
+            t.start()
+        return _speech_thread
+
+
+def _stop_speech_worker() -> None:
+    global _speech_thread
+    with _speech_thread_lock:
+        if _speech_thread is not None and _speech_thread.is_alive():
+            _speech_queue.put(None)
+            _speech_thread.join(timeout=1.0)
+            _speech_thread = None
+
+
+atexit.register(_stop_speech_worker)
+
+
+def _speech_worker_loop() -> None:
+    has_com = False
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+        has_com = True
+    except Exception:
+        has_com = False
+
+    try:
+        while True:
+            item = _speech_queue.get()
+            if item is None:
+                _speech_queue.task_done()
+                break
+            text, done_event, err_holder = item
+            try:
+                if _stop_event.is_set():
+                    _diag("[TTS]: speech worker abandoning stopped utterance")
+                else:
+                    _speak_with_pyttsx3(text)
+            except Exception as exc:
+                err_holder.append(exc)
+            finally:
+                done_event.set()
+                _speech_queue.task_done()
+    finally:
+        _discard_tts_engine()
+        if has_com:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+
 def _discard_tts_engine():
     """Drop the SAPI5 engine so the next utterance gets a fresh COM voice."""
     global _tts_engine
@@ -418,7 +487,20 @@ def _new_tts_engine():
     return engine
 
 
+def _dispatch_pyttsx3(text: str) -> None:
+    _ensure_speech_thread()
+    done_event = threading.Event()
+    err_holder: list[Exception] = []
+    _speech_queue.put((text, done_event, err_holder))
+    done_event.wait()
+    if err_holder:
+        raise err_holder[0]
+
+
 def _speak_with_pyttsx3(text):
+    if threading.current_thread() != _speech_thread:
+        _dispatch_pyttsx3(text)
+        return
     engine = _new_tts_engine()
     _diag(f"[TTS]: speaking {len(text)} characters")
     engine.say(text)
@@ -620,12 +702,12 @@ def _run_tts_background(text: str) -> None:
             print("[TTS]: natural voice unavailable; using the local voice.")
 
         try:
-            _speak_with_pyttsx3(text)
+            _dispatch_pyttsx3(text)
         except Exception as exc:
             print(f"[TTS]: playback failed ({type(exc).__name__}: {exc}). Retrying with a new engine.")
             _discard_tts_engine()
             try:
-                _speak_with_pyttsx3(text)
+                _dispatch_pyttsx3(text)
             except Exception as retry_exc:
                 print(
                     f"[TTS]: retry failed ({type(retry_exc).__name__}: {retry_exc}). "
@@ -954,6 +1036,9 @@ def listen_loop():
             print(f"\n[Notice]: {e}")
             time.sleep(0.5)
             print("Listening...", flush=True)
+
+
+_ensure_speech_thread()
 
 
 if __name__ == "__main__":

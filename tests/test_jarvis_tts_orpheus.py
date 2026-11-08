@@ -3,6 +3,7 @@
 import io
 import os
 import sys
+import threading
 import time
 import unittest
 import wave
@@ -292,6 +293,27 @@ class JarvisTTSOrpheusTests(unittest.TestCase):
         self.assertTrue(file_existed_during_call)
         self.assertEqual(file_content_during_call, b"FAKE-WAV-BYTES")
         self.assertFalse(os.path.exists(path))
+
+
+    # 15. _speak_with_pyttsx3 executes on dedicated speech thread
+    def test_speak_with_pyttsx3_executes_on_dedicated_thread(self):
+        calling_thread = threading.current_thread()
+        recorded_thread = None
+
+        def fake_speak(text):
+            nonlocal recorded_thread
+            recorded_thread = threading.current_thread()
+
+        with patch("jarvis_voice._speak_with_orpheus", return_value=False), \
+             patch("jarvis_voice._speak_with_pyttsx3", side_effect=fake_speak), \
+             patch("builtins.print"):
+            jarvis_voice.speak("Thread test")
+
+        self.assertIsNotNone(recorded_thread)
+        self.assertNotEqual(recorded_thread, calling_thread)
+        self.assertFalse(recorded_thread.name.startswith("jarvis-tts-"))
+        self.assertEqual(recorded_thread, jarvis_voice._speech_thread)
+        self.assertEqual(recorded_thread.name, "jarvis-speech-worker")
 
 
 if __name__ == "__main__":
