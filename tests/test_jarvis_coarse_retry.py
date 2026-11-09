@@ -1,6 +1,5 @@
-"""TASK-027B: coarse-retry tests for locate_element."""
+"""TASK-027B/C: coarse-retry tests for locate_element."""
 
-import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -24,21 +23,6 @@ class _FakeClient:
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=reply))])
 
 
-def _refine_reply_for(image, coarse_json_str):
-    """Compute the auto-refine reply (identity: refine == coarse point within crop)."""
-    w, h = image.size
-    coords = json.loads(coarse_json_str)
-    rx, ry = coords["x"], coords["y"]
-    cx = min(max(round(rx / 1000 * w), 0), w - 1)
-    cy = min(max(round(ry / 1000 * w), 0), h - 1)
-    side = min(480, w, h)
-    x0 = min(max(cx - side // 2, 0), w - side)
-    y0 = min(max(cy - side // 2, 0), h - side)
-    rel_x = cx - x0
-    rel_y = cy - y0
-    return json.dumps({"x": round(rel_x / side * 1000), "y": round(rel_y / side * 1000)})
-
-
 class CoarseRetryTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}, clear=False)
@@ -48,11 +32,9 @@ class CoarseRetryTests(unittest.TestCase):
     # --- (1) confirm-NO then confirmed -> screen success via refine, 6 model calls, 2 captures ---
     def test_confirm_no_then_confirmed_screen_success(self):
         img = Image.new("RGB", (1920, 1080))
-        coarse = '{"x": 500, "y": 281}'
-        refine_r = _refine_reply_for(img, coarse)
-        # Attempt 1: locate found, confirm NO -> retry
-        # Attempt 2: locate found, confirm YES -> enter refine block -> refine locate, refine confirm YES
-        replies = [coarse, "NO", coarse, "YES", refine_r, "YES"]
+        # Attempt 1: locate marker 72, cell confirm NO -> retry
+        # Attempt 2: locate marker 72, cell confirm YES -> enter refine block -> refine marker 67, refine confirm YES
+        replies = ['{"marker": 72}', "NO", '{"marker": 72}', "YES", '{"marker": 67}', "YES"]
         client = _FakeClient(replies)
         capture_mock = MagicMock(side_effect=[(img, (0, 0)), (img, (0, 0))])
         with patch("jarvis_vision.os.name", "nt"), \
@@ -66,7 +48,7 @@ class CoarseRetryTests(unittest.TestCase):
     # --- (2) absent then found (active_window) -> success, 3 calls, 2 captures ---
     def test_absent_then_found_active_window(self):
         img = Image.new("RGB", (800, 600))
-        # Attempt 1: absent (-1,-1), no confirm call; Attempt 2: found + YES
+        # Attempt 1: absent (-1,-1), no confirm call; Attempt 2: found + YES (active_window uses coordinate path)
         replies = ['{"x": -1, "y": -1}', '{"x": 500, "y": 250}', "YES"]
         client = _FakeClient(replies)
         capture_mock = MagicMock(side_effect=[(img, (100, 50)), (img, (100, 50))])
@@ -81,7 +63,7 @@ class CoarseRetryTests(unittest.TestCase):
     # --- (3) NO twice -> second unconfirmed failure, no coords ---
     def test_confirm_no_twice_gives_unconfirmed_failure(self):
         img = Image.new("RGB", (1920, 1080))
-        replies = ['{"x": 500, "y": 281}', "NO", '{"x": 500, "y": 281}', "NO"]
+        replies = ['{"marker": 72}', "NO", '{"marker": 72}', "NO"]
         client = _FakeClient(replies)
         capture_mock = MagicMock(side_effect=[(img, (0, 0)), (img, (0, 0))])
         with patch("jarvis_vision.os.name", "nt"), \
@@ -124,10 +106,8 @@ class CoarseRetryTests(unittest.TestCase):
     # --- (6) first-attempt screen success unchanged: 4 calls, 1 capture ---
     def test_first_attempt_screen_success_4_calls_1_capture(self):
         img = Image.new("RGB", (1920, 1080))
-        coarse = '{"x": 500, "y": 281}'
-        refine_r = _refine_reply_for(img, coarse)
-        # coarse-locate, coarse-confirm YES, refine-locate, refine-confirm YES = 4 calls
-        replies = [coarse, "YES", refine_r, "YES"]
+        # coarse-locate marker, cell-confirm YES, refine-locate marker, refine-confirm YES = 4 calls
+        replies = ['{"marker": 72}', "YES", '{"marker": 67}', "YES"]
         client = _FakeClient(replies)
         capture_mock = MagicMock(return_value=(img, (0, 0)))
         with patch("jarvis_vision.os.name", "nt"), \
@@ -141,10 +121,8 @@ class CoarseRetryTests(unittest.TestCase):
     # --- (7) attempt-2 confirmed but refine-confirm NO -> fail-closed, 2 captures, refine ran once ---
     def test_attempt2_confirmed_refine_confirm_no_fail_closed(self):
         img = Image.new("RGB", (1920, 1080))
-        coarse = '{"x": 500, "y": 281}'
-        refine_r = _refine_reply_for(img, coarse)
         # Attempt 1: NO -> retry; Attempt 2: YES -> refine -> refine-confirm NO -> fail
-        replies = [coarse, "NO", coarse, "YES", refine_r, "NO"]
+        replies = ['{"marker": 72}', "NO", '{"marker": 72}', "YES", '{"marker": 67}', "NO"]
         client = _FakeClient(replies)
         capture_mock = MagicMock(side_effect=[(img, (0, 0)), (img, (0, 0))])
         with patch("jarvis_vision.os.name", "nt"), \
@@ -153,7 +131,7 @@ class CoarseRetryTests(unittest.TestCase):
             result = jarvis_vision.locate_element("the Save button", "screen")
         self.assertFalse(result.ok)
         self.assertIn("couldn't confirm", result.message)
-        # 6 calls total: 2 coarse-locate + 2 coarse-confirm + 1 refine-locate + 1 refine-confirm
+        # 6 calls total: 2 coarse-locate + 2 cell-confirm + 1 refine-locate + 1 refine-confirm
         self.assertEqual(client.create.call_count, 6)
         self.assertEqual(capture_mock.call_count, 2)
 
