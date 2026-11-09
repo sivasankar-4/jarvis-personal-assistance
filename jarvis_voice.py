@@ -58,7 +58,7 @@ def _diag(msg: str) -> None:
 
 LISTEN_TIMEOUT = float(os.environ.get("JARVIS_LISTEN_TIMEOUT", "15"))
 PHRASE_TIME_LIMIT = float(os.environ.get("JARVIS_PHRASE_TIME_LIMIT", "25"))
-PAUSE_THRESHOLD = float(os.environ.get("JARVIS_PAUSE_THRESHOLD", "1.6"))
+PAUSE_THRESHOLD = float(os.environ.get("JARVIS_PAUSE_THRESHOLD", "0.8"))
 NON_SPEAKING_DURATION = float(os.environ.get("JARVIS_NON_SPEAKING_DURATION", "0.6"))
 CALIBRATE_DURATION = float(os.environ.get("JARVIS_CALIBRATE_DURATION", "1.0"))
 MAX_RECOGNITION_ATTEMPTS = int(os.environ.get("JARVIS_MAX_RECOGNITION_ATTEMPTS", "3"))
@@ -250,9 +250,62 @@ def command_from_transcript(transcript):
     return " ".join(without_wake.split()).strip(" ,")
 
 
-def transcribe_audio(recognizer, audio):
-    text = recognizer.recognize_google(audio)
+_groq_stt_client = None
+
+
+def _stt_model() -> str:
+    return os.environ.get("JARVIS_STT_MODEL", "").strip() or "whisper-large-v3-turbo"
+
+
+def _stt_client():
+    global _groq_stt_client
+    api_key = _tts_api_key()
+    if not api_key:
+        return None
+    if _groq_stt_client is None:
+        try:
+            from openai import OpenAI
+
+            _groq_stt_client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.groq.com/openai/v1",
+                timeout=10.0,
+            )
+        except Exception:
+            return None
+    return _groq_stt_client
+
+
+def _transcribe_with_whisper(audio):
+    """Return the Whisper transcript for the captured audio.
+
+    Returns None when the Whisper engine is unavailable (no key or no
+    client) so the caller can fall back; an empty string is a real
+    result (nothing intelligible was heard). API errors raise.
+    """
+    client = _stt_client()
+    if client is None:
+        return None
+    result = client.audio.transcriptions.create(
+        model=_stt_model(),
+        file=("command.wav", audio.get_wav_data()),
+        language="en",
+        response_format="text",
+    )
+    text = result if isinstance(result, str) else getattr(result, "text", "")
     return (text or "").strip()
+
+
+def transcribe_audio(recognizer, audio):
+    try:
+        text = _transcribe_with_whisper(audio)
+    except Exception:
+        text = None
+    if text is not None:
+        return text
+    _diag("[STT]: whisper unavailable or failed; falling back to Google")
+    fallback = recognizer.recognize_google(audio)
+    return (fallback or "").strip()
 
 
 def _microphone_label(mic):
