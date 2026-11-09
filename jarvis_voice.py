@@ -19,6 +19,8 @@ Microphone ownership model (single consumer at a time):
 
 import atexit
 import logging
+import math
+import struct
 import os
 import queue
 import re
@@ -893,6 +895,65 @@ def speak(text):
 # Interruptible speak used exclusively by listen_loop
 # ---------------------------------------------------------------------------
 
+def _calculate_rms(buffer, sample_width: int = 2) -> int:
+    """Calculate Root Mean Square (RMS) energy of an audio buffer."""
+    if not isinstance(buffer, (bytes, bytearray)) or len(buffer) == 0:
+        return 0
+    try:
+        import audioop
+        return audioop.rms(buffer, sample_width)
+    except Exception:
+        pass
+    if sample_width == 2:
+        num_samples = len(buffer) // 2
+        if num_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{num_samples}h", buffer[:num_samples * 2])
+        sum_sq = sum(s * s for s in samples)
+        return int(math.sqrt(sum_sq / num_samples))
+    elif sample_width == 1:
+        num_samples = len(buffer)
+        if num_samples == 0:
+            return 0
+        sum_sq = sum((b - 128) * (b - 128) for b in buffer)
+        return int(math.sqrt(sum_sq / num_samples))
+    elif sample_width == 4:
+        num_samples = len(buffer) // 4
+        if num_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{num_samples}i", buffer[:num_samples * 4])
+        sum_sq = sum(s * s for s in samples)
+        return int(math.sqrt(sum_sq / num_samples))
+    return 0
+
+
+class _EnergyTrackingStream:
+    """Pass-through wrapper around a PyAudio stream that records peak RMS energy."""
+
+    def __init__(self, stream, sample_width: int = 2):
+        self._stream = stream
+        self._sample_width = sample_width if isinstance(sample_width, int) and sample_width > 0 else 2
+        self.peak_energy = 0
+
+    def reset_peak(self) -> None:
+        self.peak_energy = 0
+
+    def read(self, *args, **kwargs):
+        data = self._stream.read(*args, **kwargs)
+        if data:
+            energy = _calculate_rms(data, self._sample_width)
+            if energy > self.peak_energy:
+                self.peak_energy = energy
+        return data
+
+    def close(self):
+        if hasattr(self._stream, "close"):
+            return self._stream.close()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def _listen_for_interrupt(interrupt_mic, session_id=None):
     """
     Poll a DEDICATED microphone (interrupt_mic) for stop phrases or new
@@ -917,19 +978,38 @@ def _listen_for_interrupt(interrupt_mic, session_id=None):
 
     sid_prefix = f"[Session {session_id}]: " if session_id else "[Interrupt]: "
     _diag(f"{sid_prefix}Interrupt listener started")
+    rate = getattr(interrupt_mic, "SAMPLE_RATE", "unknown")
+    width = getattr(interrupt_mic, "SAMPLE_WIDTH", "unknown")
+    chunk = getattr(interrupt_mic, "CHUNK", "unknown")
+    _diag(f"{sid_prefix}Interrupt stream: rate={rate} width={width} chunk={chunk}")
     try:
         while is_tts_active() and not _stop_event.is_set():
+            peak_energy = 0
+            outcome = "error"
             try:
-                with interrupt_mic as source:
-                    try:
-                        audio = poll_recognizer.listen(
-                            source,
-                            timeout=INTERRUPT_POLL_TIMEOUT,
-                            phrase_time_limit=5.0,
-                        )
-                    except sr.WaitTimeoutError:
-                        # No speech in this window; TTS may still be running.
-                        continue
+                try:
+                    with interrupt_mic as source:
+                        src_width = getattr(source, "SAMPLE_WIDTH", 2)
+                        tracker = _EnergyTrackingStream(source.stream, sample_width=src_width)
+                        source.stream = tracker
+                        try:
+                            audio = poll_recognizer.listen(
+                                source,
+                                timeout=INTERRUPT_POLL_TIMEOUT,
+                                phrase_time_limit=5.0,
+                            )
+                            outcome = "phrase"
+                        except sr.WaitTimeoutError:
+                            outcome = "timeout"
+                            audio = None
+                        finally:
+                            peak_energy = tracker.peak_energy
+                finally:
+                    _diag(f"{sid_prefix}Interrupt cycle: peak_energy={peak_energy} outcome={outcome}")
+
+                if outcome == "timeout":
+                    continue
+
                 _diag(f"{sid_prefix}Microphone stream released")
                 try:
                     heard = (poll_recognizer.recognize_google(audio) or "").strip()
