@@ -102,6 +102,11 @@ _STOP_VARIATION_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Whole-word tokens that signal stop intent when they survive inside a
+# longer, messily-endpointed transcript (see the token scan in
+# classify_interruption).
+_STOP_TOKENS = frozenset({"stop", "cancel", "halt", "silence"})
+
 # Common conversational fillers, short question words, and pleasantries that should NOT interrupt TTS
 _IGNORED_FILLERS = {
     "", "how", "what", "why", "who", "when", "where", "which",
@@ -165,6 +170,19 @@ def classify_interruption(transcript: str) -> tuple[str, str | None]:
 
     # 2. Phonetic variations like "Jarvis top" (only when addressed to Jarvis)
     if _STOP_VARIATION_PATTERNS.match(norm):
+        return INTERRUPT_STOP, None
+
+    # Multiple whole-word tokens are unambiguous. A terminal token following
+    # "it" is also an imperative that survived ASR endpointing ("make it
+    # stop"), while conversational uses such as "the bus stop" stay ignored.
+    tokens = norm.split()
+    stop_token_count = sum(token in _STOP_TOKENS for token in tokens)
+    if stop_token_count >= 2 or (
+        stop_token_count == 1
+        and tokens[-1] in _STOP_TOKENS
+        and len(tokens) >= 2
+        and tokens[-2] == "it"
+    ):
         return INTERRUPT_STOP, None
 
     # 3. Check for wake word and command payload

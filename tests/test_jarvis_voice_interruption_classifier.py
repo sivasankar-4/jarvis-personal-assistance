@@ -80,6 +80,32 @@ class InterruptionClassifierTests(unittest.TestCase):
                 self.assertEqual(decision, jarvis_voice.INTERRUPT_STOP, f"Failed for '{phrase}'")
                 self.assertIsNone(cmd)
 
+    def test_1b_messy_stop_tokens(self):
+        """Messy endpointing still detects whole-word stop intent."""
+        stop_phrases = [
+            "make a stop stop",
+            "stop stop stop stop stop stop stop stop stopstop stop hey",
+            "make it stop",
+            "cancel cancel",
+        ]
+        for phrase in stop_phrases:
+            with self.subTest(phrase=phrase):
+                decision, cmd = jarvis_voice.classify_interruption(phrase)
+                self.assertEqual(decision, jarvis_voice.INTERRUPT_STOP, f"Failed for '{phrase}'")
+                self.assertIsNone(cmd)
+
+        unrelated = [
+            "stopwatch is a useful app",
+            "i was talking about the bus stop yesterday",
+            "the stopwatch stopped working yesterday at the bus stop",
+            "how are you",
+        ]
+        for phrase in unrelated:
+            with self.subTest(phrase=phrase):
+                decision, cmd = jarvis_voice.classify_interruption(phrase)
+                self.assertEqual(decision, jarvis_voice.INTERRUPT_IGNORE, f"Failed for '{phrase}'")
+                self.assertIsNone(cmd)
+
     # 2. Wake word without stop intent
     def test_2_wake_word_without_stop_intent(self):
         """Wake word alone without a command payload is ignored."""
