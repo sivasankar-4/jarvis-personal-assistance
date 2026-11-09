@@ -52,8 +52,10 @@ def plan_direct_desktop_request(text: str):
         if not clicked.ok:
             return clicked
         cdata = clicked.data or {}
-        if cdata.get("changed") or cdata.get("foreground_after") != cdata.get("foreground_before"):
+        if cdata.get("foreground_after") != cdata.get("foreground_before"):
             return f"Clicked on {target_desc}. {clicked.message}"
+        if cdata.get("changed"):
+            return f"I clicked where I found {target_desc}, and the screen changed a little, but I can't confirm that's what you asked for."
         return f"I clicked on {target_desc}, but no visible change was detected."
 
     type_match = re.match(r"^type\s+(.+?)\s+(?:into|in)\s+(.+)$", cleaned, re.I)

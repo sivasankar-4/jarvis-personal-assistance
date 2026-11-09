@@ -49,7 +49,10 @@ class SpokenClickCommandTests(unittest.TestCase):
                 ("click_and_verify", {"x": 1851, "y": 1079, "button": "left", "clicks": 1}),
             ],
         )
-        self.assertTrue(isinstance(reply, str) and reply.startswith("Clicked on the clock."))
+        self.assertEqual(
+            reply,
+            "I clicked where I found the clock, and the screen changed a little, but I can't confirm that's what you asked for.",
+        )
 
     def test_wake_word_and_politeness_stripped_case_preserved(self):
         locate_res = ToolResult(
