@@ -6,6 +6,7 @@ title Jarvis AI Assistant
 
 echo Starting Jarvis...
 
+set JARVIS_TTS_ENGINE=local
 ".venv\Scripts\python.exe" jarvis_voice.py
 
 echo.
