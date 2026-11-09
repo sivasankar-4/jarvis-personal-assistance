@@ -130,6 +130,85 @@ def ask_screen(question: str, target: str) -> ToolResult:
     return ToolResult(True, answer, {"target": target, "model": _vision_model()})
 
 
+def _coarse_locate_attempt(client, image, description, target):
+    """One coarse locate+confirm pass over a captured image.
+
+    Returns (outcome, payload): "confirmed" with payload (x_img, y_img)
+    in original-image coordinates; "retry" with the failure ToolResult
+    when the model answered well-formed but negatively (absent claim or
+    confirmation NO); "fatal" with the failure ToolResult when retrying
+    cannot help (API error or malformed answer).
+    """
+    img_w, img_h = image.size
+    sent = image.convert("RGB")
+    if max(img_w, img_h) > 1280:
+        scale = 1280 / max(img_w, img_h)
+        sent = sent.resize((round(img_w * scale), round(img_h * scale)), Image.LANCZOS)
+    encoded = io.BytesIO()
+    sent.save(encoded, format="JPEG", quality=70)
+    data_uri = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+    try:
+        response = client.chat.completions.create(
+            model=_vision_model(),
+            messages=[
+                {"role": "system", "content": "You are the eyes of a desktop assistant. You locate UI elements in screenshots."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": f"Find the center of this element: {description}. Reply with ONLY a JSON object {{\"x\": <int>, \"y\": <int>}} with coordinates on a 0-1000 scale relative to image width and height. If the element is not present, reply {{\"x\": -1, \"y\": -1}}."},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ]},
+            ],
+            max_completion_tokens=100,
+        )
+        content = response.choices[0].message.content or ""
+    except Exception as exc:
+        return "fatal", ToolResult(False, f"I couldn't locate that ({type(exc).__name__}).")
+    match = re.search(r"\{.*?\}", content, re.DOTALL)
+    if not match:
+        return "fatal", ToolResult(False, f"I couldn't work out where '{description}' is.")
+    try:
+        coordinates = json.loads(match.group(0))
+        raw_x, raw_y = coordinates["x"], coordinates["y"]
+        if isinstance(raw_x, bool) or isinstance(raw_y, bool) or not isinstance(raw_x, (int, float)) or not isinstance(raw_y, (int, float)):
+            raise ValueError("invalid coordinates")
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return "fatal", ToolResult(False, f"I couldn't work out where '{description}' is.")
+    if raw_x < 0 or raw_y < 0:
+        return "retry", ToolResult(False, f"I couldn't find '{description}' on the screen.")
+    x_img = min(max(round(raw_x / 1000 * img_w), 0), img_w - 1)
+    y_img = min(max(round(raw_y / 1000 * img_w), 0), img_h - 1)
+    scale = sent.width / img_w
+    mx, my = x_img * scale, y_img * scale
+    marked_image = sent.copy()
+    marker = ImageDraw.Draw(marked_image)
+    marker.ellipse((mx - 22, my - 22, mx + 22, my + 22), outline=(255, 0, 0), width=4)
+    marker.line((mx - 15, my, mx + 15, my), fill=(255, 0, 0), width=4)
+    marker.line((mx, my - 15, mx, my + 15), fill=(255, 0, 0), width=4)
+    marker_buffer = io.BytesIO()
+    marked_image.save(marker_buffer, format="JPEG", quality=70)
+    marker_uri = "data:image/jpeg;base64," + base64.b64encode(marker_buffer.getvalue()).decode("ascii")
+    try:
+        confirmation = client.chat.completions.create(
+            model=_vision_model(),
+            messages=[
+                {"role": "system", "content": "You verify UI element locations in screenshots. Answer with exactly one word."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": f"A red circle marks a location in this screenshot. Is the circled location on {description}? Reply with ONLY the word YES or NO."},
+                    {"type": "image_url", "image_url": {"url": marker_uri}},
+                ]},
+            ],
+            max_completion_tokens=10,
+        )
+        confirmed = (confirmation.choices[0].message.content or "").strip().upper().startswith("YES")
+    except Exception:
+        confirmed = False
+    if not confirmed:
+        return "retry", ToolResult(
+            False, f"I couldn't confirm '{description}' is really there, so I won't guess.",
+            {"target": target, "model": _vision_model()},
+        )
+    return "confirmed", (x_img, y_img)
+
+
 def locate_element(description: str, target: str) -> ToolResult:
     if target not in ("screen", "active_window"):
         return ToolResult(False, "I can look at 'screen' or 'active_window'.")
@@ -157,73 +236,29 @@ def locate_element(description: str, target: str) -> ToolResult:
     except Exception:
         return ToolResult(False, "I couldn't reach the vision service.")
 
-    image = image.convert("RGB")
-    if max(img_w, img_h) > 1280:
-        scale = 1280 / max(img_w, img_h)
-        image = image.resize((round(img_w * scale), round(img_h * scale)), Image.LANCZOS)
-    sent_image = image
-    encoded = io.BytesIO()
-    image.save(encoded, format="JPEG", quality=70)
-    data_uri = "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
-    try:
-        response = client.chat.completions.create(
-            model=_vision_model(),
-            messages=[
-                {"role": "system", "content": "You are the eyes of a desktop assistant. You locate UI elements in screenshots."},
-                {"role": "user", "content": [
-                    {"type": "text", "text": f"Find the center of this element: {description}. Reply with ONLY a JSON object {{\"x\": <int>, \"y\": <int>}} with coordinates on a 0-1000 scale relative to image width and height. If the element is not present, reply {{\"x\": -1, \"y\": -1}}."},
-                    {"type": "image_url", "image_url": {"url": data_uri}},
-                ]},
-            ],
-            max_completion_tokens=100,
-        )
-        content = response.choices[0].message.content or ""
-    except Exception as exc:
-        return ToolResult(False, f"I couldn't locate that ({type(exc).__name__}).")
-    match = re.search(r"\{.*?\}", content, re.DOTALL)
-    if not match:
-        return ToolResult(False, f"I couldn't work out where '{description}' is.")
-    try:
-        coordinates = json.loads(match.group(0))
-        raw_x, raw_y = coordinates["x"], coordinates["y"]
-        if isinstance(raw_x, bool) or isinstance(raw_y, bool) or not isinstance(raw_x, (int, float)) or not isinstance(raw_y, (int, float)):
-            raise ValueError("invalid coordinates")
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        return ToolResult(False, f"I couldn't work out where '{description}' is.")
-    if raw_x < 0 or raw_y < 0:
-        return ToolResult(False, f"I couldn't find '{description}' on the screen.")
-    x_img = min(max(round(raw_x / 1000 * img_w), 0), img_w - 1)
-    y_img = min(max(round(raw_y / 1000 * img_w), 0), img_h - 1)
-    scale = sent_image.width / img_w
-    mx, my = x_img * scale, y_img * scale
-    marked_image = sent_image.copy()
-    marker = ImageDraw.Draw(marked_image)
-    marker.ellipse((mx - 22, my - 22, mx + 22, my + 22), outline=(255, 0, 0), width=4)
-    marker.line((mx - 15, my, mx + 15, my), fill=(255, 0, 0), width=4)
-    marker.line((mx, my - 15, mx, my + 15), fill=(255, 0, 0), width=4)
-    marker_buffer = io.BytesIO()
-    marked_image.save(marker_buffer, format="JPEG", quality=70)
-    marker_uri = "data:image/jpeg;base64," + base64.b64encode(marker_buffer.getvalue()).decode("ascii")
-    try:
-        confirmation = client.chat.completions.create(
-            model=_vision_model(),
-            messages=[
-                {"role": "system", "content": "You verify UI element locations in screenshots. Answer with exactly one word."},
-                {"role": "user", "content": [
-                    {"type": "text", "text": f"A red circle marks a location in this screenshot. Is the circled location on {description}? Reply with ONLY the word YES or NO."},
-                    {"type": "image_url", "image_url": {"url": marker_uri}},
-                ]},
-            ],
-            max_completion_tokens=10,
-        )
-        confirmed = (confirmation.choices[0].message.content or "").strip().upper().startswith("YES")
-    except Exception:
-        confirmed = False
-    if not confirmed:
-        return ToolResult(
-            False, f"I couldn't confirm '{description}' is really there, so I won't guess.",
-            {"target": target, "model": _vision_model()},
-        )
+    failure = None
+    x_img = y_img = None
+    for attempt in range(2):
+        if attempt == 1:
+            captured = _capture_with_origin(target)
+            if captured is None:
+                message = "I couldn't capture the active window." if target == "active_window" else "I couldn't capture the screen."
+                return ToolResult(False, message)
+            if len(captured) == 2:
+                image, (origin_x, origin_y) = captured
+            else:
+                image, origin_x, origin_y = captured
+            original_image = image
+            img_w, img_h = original_image.size
+        outcome, payload = _coarse_locate_attempt(client, original_image, description, target)
+        if outcome == "confirmed":
+            x_img, y_img = payload
+            break
+        failure = payload
+        if outcome == "fatal":
+            return failure
+    if x_img is None:
+        return failure
     if target == "screen":
         side = min(480, img_w, img_h)
         crop_x0 = min(max(x_img - side // 2, 0), img_w - side)

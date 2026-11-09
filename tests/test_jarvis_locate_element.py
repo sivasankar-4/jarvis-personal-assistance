@@ -98,10 +98,14 @@ class LocateElementTests(unittest.TestCase):
         self.assertEqual((result.data["x"], result.data["y"]), (500, 250))
 
     def test_not_found_skips_confirmation(self):
-        result, client = self._locate(Image.new("RGB", (100, 100)), (0, 0), '{"x": -1, "y": -1}')
+        # Both attempts return absent; call_count = 2 (one locate per attempt, no confirm on absent)
+        client = _FakeClient(['{"x": -1, "y": -1}', '{"x": -1, "y": -1}'])
+        image = Image.new("RGB", (100, 100))
+        with patch("jarvis_vision.os.name", "nt"), patch("jarvis_vision._capture_with_origin", return_value=(image, (0, 0))), patch("jarvis_vision._get_client", return_value=client):
+            result = jarvis_vision.locate_element("the Save button", "screen")
         self.assertFalse(result.ok)
         self.assertIn("couldn't find", result.message)
-        self.assertEqual(client.create.call_count, 1)
+        self.assertEqual(client.create.call_count, 2)
 
     def test_prose_wrapped_json(self):
         result, _ = self._locate(Image.new("RGB", (1920, 1080)), (0, 0), 'At {"x": 500, "y": 281}.')
@@ -119,17 +123,29 @@ class LocateElementTests(unittest.TestCase):
         self.assertEqual((result.data["x"], result.data["y"]), (1919, 1079))
 
     def test_confirm_rejects_hallucination(self):
-        result, _ = self._locate(Image.new("RGB", (1920, 1080)), (0, 0), '{"x": 500, "y": 281}', description="the Print button", confirm_reply="NO")
+        # Both attempts: locate found, confirm NO -> retry, attempt 2 same -> final unconfirmed
+        client = _FakeClient(['{"x": 500, "y": 281}', "NO", '{"x": 500, "y": 281}', "NO"])
+        image = Image.new("RGB", (1920, 1080))
+        with patch("jarvis_vision.os.name", "nt"), patch("jarvis_vision._capture_with_origin", return_value=(image, (0, 0))), patch("jarvis_vision._get_client", return_value=client):
+            result = jarvis_vision.locate_element("the Print button", "screen")
         self.assertFalse(result.ok)
         self.assertIn("couldn't confirm", result.message)
         self.assertNotIn("x", result.data)
 
     def test_confirm_garbage_rejected(self):
-        result, _ = self._locate(Image.new("RGB", (100, 100)), (0, 0), '{"x": 500, "y": 500}', confirm_reply="It looks like it.")
+        # Both attempts: garbage confirm -> not confirmed -> retry; attempt 2 same -> final unconfirmed
+        client = _FakeClient(['{"x": 500, "y": 500}', "It looks like it.", '{"x": 500, "y": 500}', "It looks like it."])
+        image = Image.new("RGB", (100, 100))
+        with patch("jarvis_vision.os.name", "nt"), patch("jarvis_vision._capture_with_origin", return_value=(image, (0, 0))), patch("jarvis_vision._get_client", return_value=client):
+            result = jarvis_vision.locate_element("the Save button", "screen")
         self.assertFalse(result.ok)
 
     def test_confirm_call_failure_rejected(self):
-        result, _ = self._locate(Image.new("RGB", (100, 100)), (0, 0), '{"x": 500, "y": 500}', confirm_reply=RuntimeError("offline"))
+        # Both attempts: confirm raises -> not confirmed -> retry; attempt 2 same -> final unconfirmed
+        client = _FakeClient(['{"x": 500, "y": 500}', RuntimeError("offline"), '{"x": 500, "y": 500}', RuntimeError("offline")])
+        image = Image.new("RGB", (100, 100))
+        with patch("jarvis_vision.os.name", "nt"), patch("jarvis_vision._capture_with_origin", return_value=(image, (0, 0))), patch("jarvis_vision._get_client", return_value=client):
+            result = jarvis_vision.locate_element("the Save button", "screen")
         self.assertFalse(result.ok)
         self.assertNotIn("x", result.data)
 
