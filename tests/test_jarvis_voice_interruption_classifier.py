@@ -106,6 +106,23 @@ class InterruptionClassifierTests(unittest.TestCase):
                 self.assertEqual(decision, jarvis_voice.INTERRUPT_IGNORE, f"Failed for '{phrase}'")
                 self.assertIsNone(cmd)
 
+    def test_1c_ratified_scan_delta_cases(self):
+        """Pins for the ratified scan placement/condition (file 45 correction)."""
+        stop_phrases = [
+            "stop it right now",
+            "cancel it",
+            "missed the bus stop",
+        ]
+        for phrase in stop_phrases:
+            with self.subTest(phrase=phrase):
+                decision, cmd = jarvis_voice.classify_interruption(phrase)
+                self.assertEqual(decision, jarvis_voice.INTERRUPT_STOP, f"Failed for '{phrase}'")
+                self.assertIsNone(cmd)
+
+        decision, cmd = jarvis_voice.classify_interruption("jarvis cancel cancel")
+        self.assertEqual(decision, jarvis_voice.INTERRUPT_COMMAND)
+        self.assertEqual(cmd, "cancel cancel")
+
     # 2. Wake word without stop intent
     def test_2_wake_word_without_stop_intent(self):
         """Wake word alone without a command payload is ignored."""

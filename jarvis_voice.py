@@ -172,19 +172,6 @@ def classify_interruption(transcript: str) -> tuple[str, str | None]:
     if _STOP_VARIATION_PATTERNS.match(norm):
         return INTERRUPT_STOP, None
 
-    # Multiple whole-word tokens are unambiguous. A terminal token following
-    # "it" is also an imperative that survived ASR endpointing ("make it
-    # stop"), while conversational uses such as "the bus stop" stay ignored.
-    tokens = norm.split()
-    stop_token_count = sum(token in _STOP_TOKENS for token in tokens)
-    if stop_token_count >= 2 or (
-        stop_token_count == 1
-        and tokens[-1] in _STOP_TOKENS
-        and len(tokens) >= 2
-        and tokens[-2] == "it"
-    ):
-        return INTERRUPT_STOP, None
-
     # 3. Check for wake word and command payload
     had_wake_word = bool(re.match(r"^(?:(?:hey|ok|okay)\s+)?jarvis\b", norm))
     cmd = _WAKE_WORD_STRIP.sub("", norm).strip()
@@ -206,6 +193,17 @@ def classify_interruption(transcript: str) -> tuple[str, str | None]:
     # that is not a filler or pleasantry, treat as actionable command
     if had_wake_word and len(cmd.split()) >= 2:
         return INTERRUPT_COMMAND, command_from_transcript(cleaned)
+
+    # 5. Stop-token scan: real barge-in transcripts are merged by endpointing
+    # into messy multi-word strings ("make a stop stop"), which defeats the
+    # fully-anchored patterns above. A whole-word stop token repeated, or a
+    # single one inside a short utterance, is unambiguous stop intent.
+    # Whole-word only: "stopwatch"/"stopped" never match. This step runs
+    # after the command check, so it can only convert today's IGNOREs.
+    tokens = norm.split()
+    stop_hits = sum(1 for token in tokens if token in _STOP_TOKENS)
+    if stop_hits >= 2 or (stop_hits == 1 and len(tokens) <= 4):
+        return INTERRUPT_STOP, None
 
     # 5. Default: Unrelated speech, ambient fragments, or short noise -> IGNORE
     return INTERRUPT_IGNORE, None
