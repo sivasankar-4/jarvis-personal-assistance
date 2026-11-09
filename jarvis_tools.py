@@ -248,7 +248,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "locate_element",
-            "description": "Find the on-screen coordinates of a UI element described in words (a button, menu, field, or icon) using a vision model, so it can be clicked with click_and_verify. Sends a screenshot to the Groq cloud API like ask_screen; the image is not saved locally. Returns the element's center coordinates, or honestly reports when the element cannot be found. Prefer target 'active_window' unless the element could be anywhere on screen.",
+            "description": "Find the on-screen coordinates of a UI element described in words (a button, menu, field, or icon) using a vision model. When the user asks to click something, this grounds the click; the click itself is performed by the assistant's click path, not by a tool call you make. Sends a screenshot to the Groq cloud API like ask_screen; the image is not saved locally. Returns the element's center coordinates, or honestly reports when the element cannot be found. Prefer target 'active_window' unless the element could be anywhere on screen.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -370,40 +370,6 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
                 "required": ["name"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "click_and_verify",
-            "description": "Click at screen coordinates and then check whether the screen visibly changed: captures a screenshot before and after the click and reports the changed region, its size, and any foreground-window change. Prefer this over click_at when you need to know whether the click had an effect. It reports WHAT changed, not whether the change was the intended one.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "integer"}, "y": {"type": "integer"},
-                    "button": {"type": "string", "enum": ["left", "right"]},
-                    "clicks": {"type": "integer"},
-                },
-                "required": ["x", "y", "button", "clicks"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "click_at",
-            "description": "Move the mouse cursor to screen coordinates (x, y) and click. Coordinates are pixels from the top-left of the primary display. clicks is 1 for a single click or 2 for a double-click. Use coordinates from a screenshot or window position. The result verifies the cursor position, not the effect of the click.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "integer"}, "y": {"type": "integer"},
-                    "button": {"type": "string", "enum": ["left", "right"]},
-                    "clicks": {"type": "integer"},
-                },
-                "required": ["x", "y", "button", "clicks"],
                 "additionalProperties": False,
             },
         },
