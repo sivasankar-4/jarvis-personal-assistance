@@ -314,6 +314,60 @@ class JarvisLoopTests(unittest.TestCase):
             self.assertIn("Outcome: COMPLETED", report)
             mock_click.assert_called_once_with("lofi video")
 
+    def test_chooser_transcript_includes_step_evidence(self):
+        saved_client = jarvis_brain._client
+        saved_cooldown = jarvis_brain._cooldown_until
+        jarvis_brain._cooldown_until = 0.0
+
+        captured_messages = []
+
+        class FakeResponse:
+            class Choice:
+                class Message:
+                    content = json.dumps({"stuck": "blocked"})
+                message = Message()
+            choices = [Choice()]
+
+        class FakeClient:
+            class Chat:
+                class Completions:
+                    def create(self, **kwargs):
+                        captured_messages.extend(kwargs.get("messages", []))
+                        return FakeResponse()
+                completions = Completions()
+            chat = Chat()
+
+        try:
+            jarvis_brain._client = FakeClient()
+            transcript = [
+                {
+                    "iteration": 1,
+                    "action": "Click on file explorer",
+                    "verification": "VERIFIED",
+                    "evidence": "Active window changed from 'Jarvis AI Assistant' to 'Home - File Explorer'",
+                }
+            ]
+            reply = jarvis_brain.choose_loop_action("open folder", "screen shows explorer", transcript)
+            self.assertEqual(reply, json.dumps({"stuck": "blocked"}))
+            user_msg = next((m["content"] for m in captured_messages if m["role"] == "user"), "")
+            self.assertIn("Home - File Explorer", user_msg)
+        finally:
+            jarvis_brain._client = saved_client
+            jarvis_brain._cooldown_until = saved_cooldown
+
+    def test_observe_question_offers_open(self):
+        captured_questions = []
+
+        def fake_ask_screen(question, target="screen"):
+            captured_questions.append(question)
+            return ToolResult(True, "YES - already done")
+
+        with patch("jarvis_loop.ask_screen", side_effect=fake_ask_screen):
+            report = jarvis_loop.run_gui_loop("play music")
+            self.assertTrue(len(captured_questions) > 0)
+            self.assertIn("OPEN", captured_questions[0])
+            self.assertIn("Outcome: COMPLETED", report)
+
 
 if __name__ == "__main__":
     unittest.main()

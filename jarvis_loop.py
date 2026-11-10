@@ -25,7 +25,8 @@ _GUI_VERBS = re.compile(r"\b(?:click|type|press|play)\b", re.I)
 _OBSERVE_QUESTION = (
     "Goal: {goal}. What is visible on the screen now? "
     "Is the goal already done? Answer YES or NO first. "
-    "If not, name the single next UI element to interact with and the kind of action it needs (click, type, or key)."
+    "If not, name the single next UI element to interact with and the kind of action it needs (click, type, or key) "
+    "— or, if an app or website the goal needs is not open yet, say OPEN followed by its name instead."
 )
 
 

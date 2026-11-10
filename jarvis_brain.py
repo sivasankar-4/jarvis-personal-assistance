@@ -271,7 +271,9 @@ _LOOP_SYSTEM = (
     "{\"action\": \"key\", \"shortcut\": \"...\"}, "
     "{\"action\": \"open\", \"kind\": \"app\" or \"website\", \"value\": \"...\"}, "
     "{\"done\": true, \"evidence\": \"<one sentence>\"}, "
-    "{\"stuck\": \"<one sentence>\"}."
+    "{\"stuck\": \"<one sentence>\"}. "
+    "Strategy: if the goal needs an app or website that is not open yet, prefer the open action instead of clicking taskbar or desktop icons. "
+    "Read each step's evidence: if a step opened the wrong app or did not move toward the goal, do not repeat the same action; choose a different one."
 )
 
 
@@ -290,7 +292,7 @@ def choose_loop_action(goal, observation, transcript):
             return None
     lines = [f"Goal: {goal}"]
     for step in transcript:
-        lines.append(f"Step {step['iteration']}: {step['action']} — {step['verification']}")
+        lines.append(f"Step {step['iteration']}: {step['action']} — {step['verification']} ({step['evidence']})")
     lines.append(f"Current observation: {observation}")
     messages = [
         {"role": "system", "content": _LOOP_SYSTEM},
