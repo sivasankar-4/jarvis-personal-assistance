@@ -283,7 +283,6 @@ def create_task_from_objective(objective: str) -> Task:
         (r"\b(?:save\b.*?\b(?:desktop|file|disk|folder)|save\s+as|save\s+it)\b", "saving files or creating files directly on disk is not supported yet"),
         (r"\b(?:send\s+email|send\s+an\s+email|compose\s+email)\b", "sending emails is not supported yet"),
         (r"\b(?:send\s+whatsapp|message\s+on\s+whatsapp)\b", "automated WhatsApp messaging is not supported yet"),
-        (r"\b(?:click\s+(?:on\s+)?button|click\s+icon|move\s+mouse)\b", "mouse and GUI clicking automation is not supported yet"),
         (r"\b(?:dom\s+automation|inspect\s+element|read\s+browser\s+dom)\b", "browser DOM automation is not supported yet"),
     ]
     for pattern, reason in unsupported_patterns:
