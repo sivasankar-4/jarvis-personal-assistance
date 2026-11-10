@@ -53,7 +53,8 @@ def _screen_size():
     """(width, height) of the primary display in physical pixels, or None."""
     try:
         import ctypes
-
+        import jarvis_windows
+        
         user32 = ctypes.windll.user32
         width = int(user32.GetSystemMetrics(0))
         height = int(user32.GetSystemMetrics(1))
