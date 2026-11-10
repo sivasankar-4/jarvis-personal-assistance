@@ -254,7 +254,7 @@ class JarvisLoopTests(unittest.TestCase):
         """When multi-step objective deterministic plan fails, think falls back to gui loop if trigger matches."""
         # "play lofi and then click start" - planner fails because unsupported or unplannable,
         # but should_attempt_loop is True because it has 'play'/'click'.
-        fake_report = "Goal: play lofi\nOutcome: COMPLETED — Done."
+        fake_report = "Goal: play lofi\nOutcome: COMPLETED — The latest observation confirms the goal is done."
         with patch("jarvis_tasks.create_task_from_objective") as mock_create, \
              patch("jarvis_loop.run_gui_loop", return_value=fake_report) as mock_loop:
             failed_task = jarvis_tasks.Task(
@@ -265,8 +265,38 @@ class JarvisLoopTests(unittest.TestCase):
             )
             mock_create.return_value = failed_task
             response = jarvis_brain.think("play lofi and then click start")
-            self.assertEqual(response, fake_report)
+            self.assertEqual(response, "Done. The latest observation confirms the goal is done.")
             mock_loop.assert_called_once_with("play lofi and then click start")
+
+    def test_spoken_summary_mappings(self):
+        """Test exact spoken_summary mappings for COMPLETED, PARTIAL, FAILED, and empty/garbage."""
+        # COMPLETED
+        rep_completed = "Goal: test\nOutcome: COMPLETED — The latest observation confirms the goal is done."
+        self.assertEqual(
+            jarvis_loop.spoken_summary(rep_completed),
+            "Done. The latest observation confirms the goal is done.",
+        )
+
+        # PARTIAL
+        reason_partial = "The screen stopped changing, so I stopped instead of repeating myself."
+        rep_partial = f"Goal: test\nOutcome: PARTIAL — {reason_partial}"
+        self.assertEqual(
+            jarvis_loop.spoken_summary(rep_partial),
+            "I couldn't finish that. " + reason_partial,
+        )
+
+        # FAILED
+        reason_failed = "I couldn't observe the screen: device disconnected"
+        rep_failed = f"Goal: test\nOutcome: FAILED — {reason_failed}"
+        self.assertEqual(
+            jarvis_loop.spoken_summary(rep_failed),
+            "That failed. " + reason_failed,
+        )
+
+        # garbage / empty
+        self.assertEqual(jarvis_loop.spoken_summary(""), "I couldn't finish that.")
+        self.assertEqual(jarvis_loop.spoken_summary(None), "I couldn't finish that.")
+        self.assertEqual(jarvis_loop.spoken_summary("invalid report text"), "I couldn't finish that.")
 
     def test_happy_path_click_verified_then_yes_completed(self):
         """§5.2: NO obs -> click VERIFIED -> YES obs -> COMPLETED, step listed."""

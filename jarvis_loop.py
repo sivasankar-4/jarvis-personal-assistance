@@ -185,3 +185,20 @@ def run_gui_loop(objective):
     else:
         outcome, reason = "PARTIAL", f"I reached the {MAX_LOOP_STEPS}-step limit without the goal being confirmed done."
     return _report(objective, steps, outcome, reason)
+
+
+def spoken_summary(report):
+    """One spoken line for a loop report: the outcome, without the step detail."""
+    outcome = ""
+    reason = ""
+    for line in (report or "").splitlines():
+        if line.startswith("Outcome: "):
+            outcome, _, reason = line[len("Outcome: "):].partition(" — ")
+    if outcome == "COMPLETED":
+        return f"Done. {reason}".strip()
+    if outcome == "FAILED":
+        return f"That failed. {reason}".strip()
+    if outcome == "PARTIAL":
+        return f"I couldn't finish that. {reason}".strip()
+    return "I couldn't finish that."
+

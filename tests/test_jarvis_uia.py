@@ -214,6 +214,39 @@ class JarvisUiaTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(mock_search.call_count, 1)
 
+    def test_09_offscreen_candidates_skipped_when_screen_size_known(self):
+        # A lone off-screen candidate returns None
+        sentinel = FakeElement(name="Chrome", rectangle=FakeRect(-32000, -32000, -31900, -31940))
+        lone_window = FakeElement(name="Window", handle=5001, children=[sentinel])
+        desktop1 = FakeDesktop(windows=[lone_window])
+
+        with patch("jarvis_uia._get_desktop", return_value=desktop1), \
+             patch("jarvis_uia._foreground_window", return_value=None), \
+             patch("jarvis_uia._screen_size", return_value=(1920, 1080)):
+            self.assertIsNone(find_element_point("Chrome", "screen"))
+
+        # Sentinel in tray scope + on-screen candidate in window scope returns on-screen point
+        tray_sentinel = FakeElement(name="Chrome", rectangle=FakeRect(-32000, -32000, -31900, -31940))
+        tray = FakeElement(name="", class_name="Shell_TrayWnd", handle=1001, children=[tray_sentinel])
+        onscreen_elem = FakeElement(name="Chrome", rectangle=FakeRect(100, 100, 160, 160))
+        win = FakeElement(name="Browser", handle=5002, children=[onscreen_elem])
+        desktop2 = FakeDesktop(windows=[tray, win])
+
+        with patch("jarvis_uia._get_desktop", return_value=desktop2), \
+             patch("jarvis_uia._foreground_window", return_value=None), \
+             patch("jarvis_uia._screen_size", return_value=(1920, 1080)):
+            self.assertEqual(find_element_point("Chrome", "screen"), (130, 130))
+
+    def test_10_filter_disabled_degrade_when_screen_size_none(self):
+        sentinel = FakeElement(name="Chrome", rectangle=FakeRect(-32000, -32000, -31900, -31940))
+        window = FakeElement(name="Window", handle=5003, children=[sentinel])
+        desktop = FakeDesktop(windows=[window])
+
+        with patch("jarvis_uia._get_desktop", return_value=desktop), \
+             patch("jarvis_uia._foreground_window", return_value=None), \
+             patch("jarvis_uia._screen_size", return_value=None):
+            self.assertEqual(find_element_point("Chrome", "screen"), (-31950, -31970))
+
 
 if __name__ == "__main__":
     unittest.main()

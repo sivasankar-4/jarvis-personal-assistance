@@ -429,7 +429,9 @@ def think(q):
             import jarvis_loop
 
             if jarvis_loop.should_attempt_loop(q):
-                response = jarvis_loop.run_gui_loop(q)
+                report = jarvis_loop.run_gui_loop(q)
+                print(report)
+                response = jarvis_loop.spoken_summary(report)
             else:
                 response = task.outcome or task.error or "Could not create task plan."
             _record_turn(q, response)

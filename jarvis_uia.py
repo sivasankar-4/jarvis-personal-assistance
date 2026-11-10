@@ -49,6 +49,21 @@ def _get_desktop():
     return Desktop(backend="uia")
 
 
+def _screen_size():
+    """(width, height) of the primary display in physical pixels, or None."""
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        width = int(user32.GetSystemMetrics(0))
+        height = int(user32.GetSystemMetrics(1))
+        if width > 0 and height > 0:
+            return (width, height)
+    except Exception:
+        pass
+    return None
+
+
 def _foreground_window(desktop):
     try:
         import ctypes
@@ -96,6 +111,7 @@ def _scope_roots(desktop, target):
 
 def _search_scope(root, query, deadline):
     """Centre point of the unique best match under root, else None."""
+    size = _screen_size()
     best_level = None
     best_point = None
     tied = False
@@ -113,7 +129,9 @@ def _search_scope(root, query, deadline):
                     rect = info.rectangle
                     if rect.right > rect.left and rect.bottom > rect.top:
                         point = ((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
-                        if best_level is None or level < best_level:
+                        if size is not None and not (0 <= point[0] < size[0] and 0 <= point[1] < size[1]):
+                            pass  # off-screen (minimized/cloaked window): not a candidate
+                        elif best_level is None or level < best_level:
                             best_level, best_point, tied = level, point, False
                         elif level == best_level:
                             tied = True
