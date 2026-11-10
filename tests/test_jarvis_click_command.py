@@ -109,8 +109,9 @@ class SpokenClickCommandTests(unittest.TestCase):
             recorder.calls,
             [("locate_element", {"description": "the clock", "target": "screen"})],
         )
+        self.assertFalse(reply.ok)
         self.assertEqual(
-            reply,
+            reply.message,
             "I found something that might be the clock, but I couldn't confirm it, so I won't click.",
         )
 

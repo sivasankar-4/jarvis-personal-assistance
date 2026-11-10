@@ -8,15 +8,8 @@ from __future__ import annotations
 
 import re
 
-import jarvis_windows
 from jarvis_tools import execute_tool
-
-
-class ToolResult(jarvis_windows.ToolResult):
-    def __eq__(self, other):
-        if isinstance(other, str):
-            return self.message == other
-        return super().__eq__(other)
+from jarvis_windows import ToolResult
 
 
 def grounded_click(target_desc):

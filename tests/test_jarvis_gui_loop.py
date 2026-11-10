@@ -268,6 +268,22 @@ class JarvisLoopTests(unittest.TestCase):
             self.assertEqual(response, fake_report)
             mock_loop.assert_called_once_with("play lofi and then click start")
 
+    def test_happy_path_click_verified_then_yes_completed(self):
+        """§5.2: NO obs -> click VERIFIED -> YES obs -> COMPLETED, step listed."""
+        observations = [
+            ToolResult(True, "NO - YouTube is open, a lofi video is listed"),
+            ToolResult(True, "YES - the video is playing"),
+        ]
+        click_result = ToolResult(True, "Clicked.", {"changed": True, "changed_percent": 5.0, "change_region": None, "foreground_before": "a", "foreground_after": "b"})
+        choice = json.dumps({"action": "click", "target": "lofi video"})
+        with patch("jarvis_loop.ask_screen", side_effect=observations), \
+             patch("jarvis_brain.choose_loop_action", return_value=choice), \
+             patch("jarvis_loop.grounded_click", return_value=click_result) as mock_click:
+            report = jarvis_loop.run_gui_loop("open YouTube and play lofi")
+            self.assertIn("Step 1: Click on lofi video — VERIFIED", report)
+            self.assertIn("Outcome: COMPLETED", report)
+            mock_click.assert_called_once_with("lofi video")
+
 
 if __name__ == "__main__":
     unittest.main()
