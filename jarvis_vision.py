@@ -346,6 +346,19 @@ def locate_element(description: str, target: str) -> ToolResult:
     if os.name != "nt":
         return ToolResult(False, "Vision is available only on Windows.")
 
+    try:
+        from jarvis_uia import find_element_point
+
+        uia_point = find_element_point(description, target)
+    except Exception:
+        uia_point = None
+    if uia_point is not None:
+        uia_x, uia_y = uia_point
+        return ToolResult(
+            True, f"Found '{description}' at approximately ({uia_x}, {uia_y}).",
+            {"x": uia_x, "y": uia_y, "target": target, "model": "uia", "confirmed": True},
+        )
+
     captured = _capture_with_origin(target)
     if captured is None:
         message = "I couldn't capture the active window." if target == "active_window" else "I couldn't capture the screen."
