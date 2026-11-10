@@ -133,12 +133,14 @@ def find_element_point(description, target):
         if not query:
             return None
         desktop = _get_desktop()
-        deadline = time.monotonic() + _TIME_BUDGET
-        for root in _scope_roots(desktop, target):
-            point = _search_scope(root, query, deadline)
-            if point is not None:
-                return point
-            if time.monotonic() > deadline:
+        roots = _scope_roots(desktop, target)
+        for _attempt in range(2):
+            deadline = time.monotonic() + _TIME_BUDGET
+            for root in roots:
+                point = _search_scope(root, query, deadline)
+                if point is not None:
+                    return point
+            if time.monotonic() <= deadline:
                 break
         return None
     except Exception:

@@ -1,7 +1,7 @@
 """Tests for deterministic UI Automation element lookup (TASK-027E)."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jarvis_uia
 from jarvis_uia import _match_level, _normalise, _normalise_query, find_element_point
@@ -166,6 +166,53 @@ class JarvisUiaTests(unittest.TestCase):
         with patch("jarvis_uia._get_desktop", side_effect=RuntimeError("COM initialization failure")):
             self.assertIsNone(find_element_point("start", "screen"))
             self.assertIsNone(find_element_point("the Start button", "screen"))
+
+    def test_07_warm_retry_pass_when_first_pass_exceeds_deadline(self):
+        fake_root = FakeElement(name="Root", handle=4001)
+        desktop = FakeDesktop(windows=[fake_root])
+
+        # Pass 1 start t=100.0 (deadline 103.0). Loop finishes past deadline at t=104.0.
+        # Pass 2 start t=104.0 (deadline 107.0). Search returns hit.
+        clock_times = [100.0, 104.0, 104.0, 105.0]
+
+        def fake_monotonic():
+            if clock_times:
+                return clock_times.pop(0)
+            return 200.0
+
+        mock_search = MagicMock(side_effect=[None, (628, 1050)])
+
+        with patch("jarvis_uia._get_desktop", return_value=desktop), \
+             patch("jarvis_uia._foreground_window", return_value=None), \
+             patch("jarvis_uia.time.monotonic", side_effect=fake_monotonic), \
+             patch("jarvis_uia._search_scope", mock_search):
+            result = find_element_point("start", "screen")
+
+        self.assertEqual(result, (628, 1050))
+        self.assertEqual(mock_search.call_count, 2)
+
+    def test_08_clean_miss_inside_budget_stops_after_one_pass(self):
+        fake_root = FakeElement(name="Root", handle=4002)
+        desktop = FakeDesktop(windows=[fake_root])
+
+        # Pass 1 start t=100.0 (deadline 103.0). Loop finishes within budget at t=101.0.
+        clock_times = [100.0, 101.0]
+
+        def fake_monotonic():
+            if clock_times:
+                return clock_times.pop(0)
+            return 101.0
+
+        mock_search = MagicMock(return_value=None)
+
+        with patch("jarvis_uia._get_desktop", return_value=desktop), \
+             patch("jarvis_uia._foreground_window", return_value=None), \
+             patch("jarvis_uia.time.monotonic", side_effect=fake_monotonic), \
+             patch("jarvis_uia._search_scope", mock_search):
+            result = find_element_point("nonexistent", "screen")
+
+        self.assertIsNone(result)
+        self.assertEqual(mock_search.call_count, 1)
 
 
 if __name__ == "__main__":
