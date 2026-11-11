@@ -85,13 +85,16 @@ def plan_direct_desktop_request(text: str):
         return execute_tool("open_website", {"url": website.group(1)})
 
     youtube = re.match(
-        r"^(?:open|launch|start)\s+youtube(?:\s+and\s+(?:search(?:\s+for)?|type)\s+(.+))?$",
+        r"^(?:open|launch|start)\s+youtube(?:\s+and\s+(search(?:\s+for)?|type|play)\s+(.+))?$",
         cleaned,
         re.I,
     )
     if youtube:
-        query = youtube.group(1)
+        verb = youtube.group(1)
+        query = youtube.group(2)
         if query:
+            if verb and verb.lower().startswith("play"):
+                return execute_tool("play_youtube", {"query": query.strip()})
             return execute_tool("search_youtube", {"query": query.strip()})
         return execute_tool("open_website", {"url": "https://www.youtube.com"})
 

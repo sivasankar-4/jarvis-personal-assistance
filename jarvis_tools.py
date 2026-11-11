@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 
 import jarvis_policy
@@ -85,6 +86,19 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "search_youtube",
             "description": "Open a YouTube results page for an explicit search query.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_youtube",
+            "description": "Play the first YouTube video result for a query: search YouTube, click the first result, and confirm a video is playing.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -472,6 +486,42 @@ def search_web(query: str) -> jarvis_windows.ToolResult:
     return result
 
 
+def play_youtube(query: str) -> jarvis_windows.ToolResult:
+    if not isinstance(query, str) or not query.strip():
+        return jarvis_windows.ToolResult(False, "Please say what you want to play on YouTube.")
+    safe_query = query.strip()
+    search_result = search_youtube(safe_query)
+    if not search_result.ok:
+        return search_result
+    from jarvis_planner import grounded_click
+    click_result = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(2)
+        click_result = grounded_click("first video result on YouTube")
+        if "changed" in (click_result.data or {}):
+            break
+    if click_result is None or "changed" not in (click_result.data or {}):
+        return jarvis_windows.ToolResult(
+            False,
+            f"I searched YouTube for {safe_query}, but I couldn't find a video result to click.",
+        )
+    if not click_result.ok:
+        return jarvis_windows.ToolResult(
+            False,
+            f"I clicked the first result for {safe_query}, but the click could not be verified.",
+        )
+    answer = jarvis_vision.ask_screen(
+        "Is a YouTube video playing? Answer YES or NO first.", target="screen"
+    )
+    if answer.ok and (answer.message or "").strip().upper().startswith("YES"):
+        return jarvis_windows.ToolResult(True, f"Playing {safe_query} on YouTube.", {"query": safe_query})
+    return jarvis_windows.ToolResult(
+        False,
+        f"I clicked the first result for {safe_query}, but I couldn't confirm a video is playing.",
+    )
+
+
 _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "list_windows": ("list_windows", {}),
     "wait_for_window": ("wait_for_window", {"process_name": str, "timeout_seconds": int}),
@@ -479,6 +529,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "open_path": ("open_path", {"path": str}),
     "open_website": ("open_website", {"url": str}),
     "search_youtube": (search_youtube, {"query": str}),
+    "play_youtube": (play_youtube, {"query": str}),
     "search_web": (search_web, {"query": str}),
     "send_shortcut": ("send_shortcut", {"shortcut": str}),
     "type_text": ("type_text", {"text": str, "expected_window": str}),
