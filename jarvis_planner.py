@@ -109,7 +109,7 @@ def plan_direct_desktop_request(text: str):
         target = app.group(1).strip().strip('"')
         if re.match(r"^(?:[a-zA-Z]:[\\/]|[\\/]|~[\\/])", target):
             return execute_tool("open_path", {"path": target})
-        if target.lower() in {"whatsapp", "gmail", "google", "github", "maps", "calendar", "drive"}:
+        if target.lower() in {"gmail", "google", "github", "maps", "calendar", "drive"}:
             return None
         return execute_tool("launch_application", {"name": target})
 
