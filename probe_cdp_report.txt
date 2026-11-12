@@ -1,0 +1,17 @@
+Site         Step   Status   Evidence
+--------------------------------------------------------------------------------
+wikipedia    S1     PASS     https://en.wikipedia.org/wiki/Main_Page | Wikipedia, the free encyclopedia
+wikipedia    S2     FAIL     none found
+wikipedia    S3     FAIL     Skipped: search box not found in S2
+wikipedia    S4     PASS     before: 0, after: 600
+wikipedia    S5     FAIL     no candidate matched (visible <a> count: 250)
+youtube      S1     PASS     https://www.youtube.com/?themeRefresh=1 | YouTube
+youtube      S2     FAIL     none found
+youtube      S3     FAIL     Skipped: search box not found in S2
+youtube      S4     PASS     before: 0, after: 600
+youtube      S5     FAIL     no candidate matched (visible <a> count: 7)
+youtube      S6     FAIL     r1: {'paused': True, 't': 0, 'rs': 0}, r2: {'paused': True, 't': 0, 'rs': 0}
+--------------------------------------------------------------------------------
+Elapsed time:
+  wikipedia: 6.85s
+  youtube: 15.94s
