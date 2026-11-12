@@ -561,15 +561,20 @@ def play_youtube(query: str) -> jarvis_windows.ToolResult:
         return opened
     time.sleep(5)
     confirmed = False
-    for attempt in range(2):
+    checks = []
+    for attempt in range(4):
         if attempt > 0:
             time.sleep(4)
         answer = jarvis_vision.ask_screen(
             "Is a YouTube video playing? Answer YES or NO first.", target="screen"
         )
-        if answer.ok and (answer.message or "").strip().upper().startswith("YES"):
-            confirmed = True
-            break
+        if answer.ok:
+            checks.append(" ".join((answer.message or "").split())[:80])
+            if (answer.message or "").strip().upper().startswith("YES"):
+                confirmed = True
+                break
+        else:
+            checks.append("ask_screen failed: " + (answer.message or "")[:60])
     title = video["title"]
     if confirmed:
         return jarvis_windows.ToolResult(
@@ -580,6 +585,7 @@ def play_youtube(query: str) -> jarvis_windows.ToolResult:
                 "video_id": video["video_id"],
                 "title": title,
                 "url": video["url"],
+                "checks": checks,
             },
         )
     return jarvis_windows.ToolResult(
@@ -590,6 +596,7 @@ def play_youtube(query: str) -> jarvis_windows.ToolResult:
             "video_id": video["video_id"],
             "title": title,
             "url": video["url"],
+            "checks": checks,
         },
     )
 

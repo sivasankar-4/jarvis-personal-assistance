@@ -99,6 +99,7 @@ class TestJarvisPlayYoutube(unittest.TestCase):
                 "video_id": "KumAuTVPORg",
                 "title": "Lofi Hip Hop Radio",
                 "url": "https://www.youtube.com/watch?v=KumAuTVPORg",
+                "checks": ["YES - playing"],
             },
         )
 
@@ -142,6 +143,10 @@ class TestJarvisPlayYoutube(unittest.TestCase):
         self.assertEqual(res.data.get("video_id"), "KumAuTVPORg")
         self.assertEqual(res.data.get("title"), "Lofi Hip Hop Radio")
         self.assertEqual(res.data.get("url"), "https://www.youtube.com/watch?v=KumAuTVPORg")
+        self.assertEqual(
+            res.data.get("checks"),
+            ["NO - still loading", "NO - still loading", "NO - still loading", "NO - still loading"],
+        )
         self.assertEqual(
             res.message,
             "I opened the video for lofi but couldn't confirm it is playing.",
@@ -194,6 +199,7 @@ class TestJarvisPlayYoutube(unittest.TestCase):
         self.assertTrue(res.ok)
         self.assertEqual(res.message, "Playing lofi on YouTube.")
         self.assertEqual(res.data.get("video_id"), "KumAuTVPORg")
+        self.assertEqual(res.data.get("checks"), ["NO - buffering", "YES - now playing"])
 
     @patch("jarvis_tools.search_youtube")
     @patch("jarvis_tools._first_youtube_video")
@@ -205,6 +211,64 @@ class TestJarvisPlayYoutube(unittest.TestCase):
 
         self.assertFalse(res.ok)
         self.assertEqual(res.message, "Failed to reach YouTube.")
+
+    @patch("time.sleep")
+    @patch("jarvis_vision.ask_screen")
+    @patch("jarvis_windows.open_website")
+    @patch("jarvis_tools._first_youtube_video")
+    def test_11_play_youtube_yes_on_fourth_ask(
+        self, mock_first_video, mock_open, mock_ask, mock_sleep
+    ):
+        mock_first_video.return_value = {
+            "video_id": "KumAuTVPORg",
+            "title": "Lofi Track",
+            "url": "https://www.youtube.com/watch?v=KumAuTVPORg",
+        }
+        mock_open.return_value = jarvis_windows.ToolResult(True, "Opened YouTube.")
+        mock_ask.side_effect = [
+            jarvis_windows.ToolResult(True, "NO - overlay visible"),
+            jarvis_windows.ToolResult(True, "NO - ad playing"),
+            jarvis_windows.ToolResult(True, "NO - still buffering"),
+            jarvis_windows.ToolResult(True, "YES - video is playing"),
+        ]
+
+        res = jarvis_tools.play_youtube("lofi")
+
+        self.assertTrue(res.ok)
+        self.assertEqual(res.message, "Playing lofi on YouTube.")
+        self.assertEqual(
+            res.data.get("checks"),
+            ["NO - overlay visible", "NO - ad playing", "NO - still buffering", "YES - video is playing"],
+        )
+
+    @patch("time.sleep")
+    @patch("jarvis_vision.ask_screen")
+    @patch("jarvis_windows.open_website")
+    @patch("jarvis_tools._first_youtube_video")
+    def test_12_play_youtube_ask_screen_fails(
+        self, mock_first_video, mock_open, mock_ask, mock_sleep
+    ):
+        mock_first_video.return_value = {
+            "video_id": "KumAuTVPORg",
+            "title": "Lofi Track",
+            "url": "https://www.youtube.com/watch?v=KumAuTVPORg",
+        }
+        mock_open.return_value = jarvis_windows.ToolResult(True, "Opened YouTube.")
+        mock_ask.return_value = jarvis_windows.ToolResult(False, "vision down")
+
+        res = jarvis_tools.play_youtube("lofi")
+
+        self.assertFalse(res.ok)
+        self.assertEqual(res.data.get("reason"), "unconfirmed")
+        self.assertEqual(
+            res.data.get("checks"),
+            [
+                "ask_screen failed: vision down",
+                "ask_screen failed: vision down",
+                "ask_screen failed: vision down",
+                "ask_screen failed: vision down",
+            ],
+        )
 
 
 if __name__ == "__main__":
