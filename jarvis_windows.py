@@ -620,8 +620,60 @@ def _vs_code_locations() -> list[Path]:
     return locations
 
 
+def _shell_execute_open(target: str) -> int:
+    """Open a shell target (URL or shell:AppsFolder path) via ShellExecuteW."""
+    return ctypes.windll.shell32.ShellExecuteW(None, "open", target, None, None, 1)
+
+
+def _parse_start_apps(text: str) -> list[AppInfo]:
+    """Parse Get-StartApps JSON into Store AppInfo entries (AUMID form only)."""
+    try:
+        raw = json.loads(text.lstrip("\ufeff")) if text and text.strip() else []
+    except ValueError:
+        return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    apps: list[AppInfo] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("Name") or "").strip()
+        app_id = str(entry.get("AppID") or "").strip()
+        if not name or not app_id or "!" not in app_id:
+            continue
+        apps.append(AppInfo(name, f"shell:AppsFolder\\{app_id}", "store"))
+    return apps
+
+
+def _store_apps_from_start_apps() -> list[AppInfo]:
+    """Enumerate Store/UWP apps via Get-StartApps; any failure yields []."""
+    if not _is_windows():
+        return []
+    try:
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-StartApps | Select-Object -Property Name, AppID | ConvertTo-Json -Compress",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0:
+        return []
+    return _parse_start_apps(completed.stdout)
+
+
 def discover_applications() -> list[AppInfo]:
-    """Discover registered, installed, and PATH applications without a shell."""
+    """Discover registered, installed, PATH, and Store applications."""
     apps = {info.executable.lower(): info for info in _app_paths_from_registry()}
     for location in _vs_code_locations():
         if location.is_file():
@@ -632,6 +684,8 @@ def discover_applications() -> list[AppInfo]:
             if executable:
                 apps.setdefault(executable.lower(), AppInfo(friendly_name, executable, "PATH"))
                 break
+    for info in _store_apps_from_start_apps():
+        apps.setdefault(info.executable.lower(), info)
     return list(apps.values())
 
 
@@ -651,6 +705,21 @@ def launch_application(name: str) -> ToolResult:
     app = find_application(name)
     if not app:
         return _result("launch_application", False, f"I couldn't find an installed application named {name}.")
+    if app.executable.lower().startswith("shell:appsfolder\\"):
+        try:
+            code = _shell_execute_open(app.executable)
+        except (AttributeError, OSError):
+            code = 0
+        if code <= 32:
+            print(f"[Jarvis Windows] launch failed for {app.name} (ShellExecuteW code {code}, source={app.source})")
+            return _result("launch_application", False, f"Windows could not start {app.name}.")
+        return _result(
+            "launch_application",
+            True,
+            f"Launched {app.name} but could not confirm a window.",
+            verified=False,
+            source=app.source,
+        )
     try:
         process = subprocess.Popen([app.executable], close_fds=True)
     except OSError as exc:

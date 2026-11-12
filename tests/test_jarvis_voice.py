@@ -225,7 +225,7 @@ class VoiceCaptureRetryTests(unittest.TestCase):
     def test_recognizer_allows_pauses_inside_a_sentence(self):
         recognizer = sr.Recognizer()
         jarvis_voice.apply_recognizer_settings(recognizer)
-        self.assertGreaterEqual(recognizer.pause_threshold, 1.5)
+        self.assertEqual(recognizer.pause_threshold, 0.8)
         self.assertLessEqual(recognizer.non_speaking_duration, recognizer.pause_threshold)
         self.assertFalse(recognizer.dynamic_energy_threshold)
         self.assertEqual(recognizer.operation_timeout, jarvis_voice.RECOGNITION_NETWORK_TIMEOUT)

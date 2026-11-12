@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 import urllib.parse
+import urllib.request
 
 import jarvis_policy
 import jarvis_routines
@@ -85,6 +88,19 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "search_youtube",
             "description": "Open a YouTube results page for an explicit search query.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_youtube",
+            "description": "Play the first YouTube video result for a query: search YouTube, click the first result, and confirm a video is playing.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -248,7 +264,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "locate_element",
-            "description": "Find the on-screen coordinates of a UI element described in words (a button, menu, field, or icon) using a vision model, so it can be clicked with click_and_verify. Sends a screenshot to the Groq cloud API like ask_screen; the image is not saved locally. Returns the element's center coordinates, or honestly reports when the element cannot be found. Prefer target 'active_window' unless the element could be anywhere on screen.",
+            "description": "Find the on-screen coordinates of a UI element described in words (a button, menu, field, or icon) using a vision model. When the user asks to click something, this grounds the click; the click itself is performed by the assistant's click path, not by a tool call you make. Sends a screenshot to the Groq cloud API like ask_screen; the image is not saved locally. Returns the element's center coordinates, or honestly reports when the element cannot be found. Prefer target 'active_window' unless the element could be anywhere on screen.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -377,40 +393,6 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "click_and_verify",
-            "description": "Click at screen coordinates and then check whether the screen visibly changed: captures a screenshot before and after the click and reports the changed region, its size, and any foreground-window change. Prefer this over click_at when you need to know whether the click had an effect. It reports WHAT changed, not whether the change was the intended one.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "integer"}, "y": {"type": "integer"},
-                    "button": {"type": "string", "enum": ["left", "right"]},
-                    "clicks": {"type": "integer"},
-                },
-                "required": ["x", "y", "button", "clicks"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "click_at",
-            "description": "Move the mouse cursor to screen coordinates (x, y) and click. Coordinates are pixels from the top-left of the primary display. clicks is 1 for a single click or 2 for a double-click. Use coordinates from a screenshot or window position. The result verifies the cursor position, not the effect of the click.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "x": {"type": "integer"}, "y": {"type": "integer"},
-                    "button": {"type": "string", "enum": ["left", "right"]},
-                    "clicks": {"type": "integer"},
-                },
-                "required": ["x", "y", "button", "clicks"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "take_screenshot",
             "description": "Capture an image of the screen or the active window and save it as a PNG in the screenshots folder. Use when the user asks for a screenshot or to see the screen. This only observes; it does not click or type.",
             "parameters": {
@@ -506,6 +488,119 @@ def search_web(query: str) -> jarvis_windows.ToolResult:
     return result
 
 
+def _first_youtube_video(query: str) -> dict | None:
+    if not isinstance(query, str) or not query.strip():
+        return None
+    try:
+        safe_query = query.strip()
+        url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(safe_query)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+        if not raw:
+            return None
+        text = raw.decode("utf-8", errors="replace")
+        marker = "ytInitialData = "
+        idx = text.find(marker)
+        if idx == -1:
+            return None
+        decoder = json.JSONDecoder()
+        data, _ = decoder.raw_decode(text[idx + len(marker):])
+
+        def _walk(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k == "videoRenderer" and isinstance(v, dict):
+                        yield v
+                    yield from _walk(v)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from _walk(item)
+
+        for vr in _walk(data):
+            vid = vr.get("videoId")
+            if isinstance(vid, str) and re.match(r"^[A-Za-z0-9_-]{11}$", vid):
+                title = ""
+                t_obj = vr.get("title")
+                if isinstance(t_obj, dict):
+                    runs = t_obj.get("runs")
+                    if isinstance(runs, list) and runs and isinstance(runs[0], dict):
+                        title = str(runs[0].get("text") or "")
+                    elif "simpleText" in t_obj:
+                        title = str(t_obj.get("simpleText") or "")
+                return {
+                    "video_id": vid,
+                    "title": title,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                }
+        return None
+    except Exception:
+        return None
+
+
+def play_youtube(query: str) -> jarvis_windows.ToolResult:
+    if not isinstance(query, str) or not query.strip():
+        return jarvis_windows.ToolResult(False, "Please say what you want to play on YouTube.")
+    safe_query = query.strip()
+    video = _first_youtube_video(safe_query)
+    if video is None:
+        r = search_youtube(safe_query)
+        if not r.ok:
+            return r
+        return jarvis_windows.ToolResult(
+            False,
+            f"I couldn't find a video for {safe_query} on YouTube, so I opened the results instead.",
+            {"reason": "no_video_id"},
+        )
+    opened = jarvis_windows.open_website(video["url"])
+    if not opened.ok:
+        return opened
+    time.sleep(5)
+    confirmed = False
+    checks = []
+    for attempt in range(4):
+        if attempt > 0:
+            time.sleep(4)
+        answer = jarvis_vision.ask_screen(
+            "Is a YouTube video playing? Answer YES or NO first.", target="screen"
+        )
+        if answer.ok:
+            checks.append(" ".join((answer.message or "").split())[:80])
+            if (answer.message or "").strip().upper().startswith("YES"):
+                confirmed = True
+                break
+        else:
+            checks.append("ask_screen failed: " + (answer.message or "")[:60])
+    title = video["title"]
+    if confirmed:
+        return jarvis_windows.ToolResult(
+            True,
+            f"Playing {safe_query} on YouTube.",
+            {
+                "query": safe_query,
+                "video_id": video["video_id"],
+                "title": title,
+                "url": video["url"],
+                "checks": checks,
+            },
+        )
+    return jarvis_windows.ToolResult(
+        False,
+        f"I opened the video for {safe_query} but couldn't confirm it is playing.",
+        {
+            "reason": "unconfirmed",
+            "video_id": video["video_id"],
+            "title": title,
+            "url": video["url"],
+            "checks": checks,
+        },
+    )
+
+
 _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "list_windows": ("list_windows", {}),
     "wait_for_window": ("wait_for_window", {"process_name": str, "timeout_seconds": int}),
@@ -513,6 +608,7 @@ _TOOLS: dict[str, tuple[any, dict[str, type]]] = {
     "open_path": ("open_path", {"path": str}),
     "open_website": ("open_website", {"url": str}),
     "search_youtube": (search_youtube, {"query": str}),
+    "play_youtube": (play_youtube, {"query": str}),
     "search_web": (search_web, {"query": str}),
     "send_shortcut": ("send_shortcut", {"shortcut": str}),
     "type_text": ("type_text", {"text": str, "expected_window": str}),

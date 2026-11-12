@@ -263,6 +263,57 @@ def _degraded_chat_response(messages):
     return None
 
 
+_LOOP_SYSTEM = (
+    "You are choosing the single next action for a desktop assistant pursuing a goal on the user's computer. "
+    "Reply with EXACTLY one JSON object and no other text, using one of these shapes: "
+    "{\"action\": \"click\", \"target\": \"<element description in words, never coordinates>\"}, "
+    "{\"action\": \"type\", \"text\": \"...\", \"window\": \"<app name>\"}, "
+    "{\"action\": \"key\", \"shortcut\": \"...\"}, "
+    "{\"action\": \"open\", \"kind\": \"app\" or \"website\", \"value\": \"...\"}, "
+    "{\"done\": true, \"evidence\": \"<one sentence>\"}, "
+    "{\"stuck\": \"<one sentence>\"}. "
+    "Strategy: if the goal needs an app or website that is not open yet, prefer the open action instead of clicking taskbar or desktop icons. "
+    "Read each step's evidence: if a step opened the wrong app or did not move toward the goal, do not repeat the same action; choose a different one."
+)
+
+
+def choose_loop_action(goal, observation, transcript):
+    """One plain-chat call returning the raw JSON action text, or None on failure."""
+    global _client
+    if time.time() < _cooldown_until:
+        return None
+    if _client is None:
+        key = _get_api_key()
+        if not key:
+            return None
+        try:
+            _client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+        except Exception:
+            return None
+    lines = [f"Goal: {goal}"]
+    for step in transcript:
+        lines.append(f"Step {step['iteration']}: {step['action']} — {step['verification']} ({step['evidence']})")
+    lines.append(f"Current observation: {observation}")
+    messages = [
+        {"role": "system", "content": _LOOP_SYSTEM},
+        {"role": "user", "content": "\n".join(lines)},
+    ]
+    for model in MODELS:
+        try:
+            response = _client.chat.completions.create(
+                model=model, messages=messages, max_tokens=200, temperature=0.2,
+            )
+            content = (response.choices[0].message.content or "").strip()
+            if content:
+                return content
+        except Exception as exc:
+            if _is_rate_limited(exc):
+                _set_cooldown(_retry_after_seconds(exc))
+                return None
+            continue
+    return None
+
+
 def _get_api_key():
     if os.environ.get("GROQ_API_KEY"):
         return os.environ["GROQ_API_KEY"].strip()
@@ -377,7 +428,14 @@ def think(q):
     if jarvis_tasks.is_multistep_objective(q):
         task = jarvis_tasks.create_task_from_objective(q)
         if task.status == jarvis_tasks.TaskStatus.FAILED:
-            response = task.outcome or task.error or "Could not create task plan."
+            import jarvis_loop
+
+            if jarvis_loop.should_attempt_loop(q):
+                report = jarvis_loop.run_gui_loop(q)
+                print(report)
+                response = jarvis_loop.spoken_summary(report)
+            else:
+                response = task.outcome or task.error or "Could not create task plan."
             _record_turn(q, response)
             return response
         if not jarvis_tasks.task_manager.set_active_task(task):

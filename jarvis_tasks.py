@@ -199,7 +199,7 @@ def is_multistep_objective(text: str) -> bool:
     return False
 
 
-def _parse_direct_part(part_text: str, default_window: str | None = None) -> tuple[str, dict, str] | None:
+def _parse_direct_part(part_text: str, default_window: str | None = None, context: str | None = None) -> tuple[str, dict, str] | None:
     """Parse a single action segment into (tool_name, arguments, description)."""
     cleaned = " ".join((part_text or "").strip().split())
     cleaned = re.sub(r"^(?:(?:can|could|would|will)\s+you\s+|please\s+)", "", cleaned, flags=re.I).strip().rstrip(".!?")
@@ -224,6 +224,17 @@ def _parse_direct_part(part_text: str, default_window: str | None = None) -> tup
     if yt_match:
         q = yt_match.group(1).strip()
         return "search_youtube", {"query": q}, f"Search YouTube for {q}"
+
+    # Bare search / play inheriting a YouTube context from a previous step
+    if context == "youtube":
+        bare_search = re.match(r"^(?:search(?:\s+for)?)\s+(.+)$", cleaned, re.I)
+        if bare_search:
+            q = bare_search.group(1).strip()
+            return "search_youtube", {"query": q}, f"Search YouTube for {q}"
+        bare_play = re.match(r"^play\s+(.+)$", cleaned, re.I)
+        if bare_play:
+            q = bare_play.group(1).strip()
+            return "play_youtube", {"query": q}, f"Play {q} on YouTube"
 
     # Google / Web search
     web_match = re.match(r"^(?:search(?:\s+for)?|google|look up)\s+(.+)$", cleaned, re.I)
@@ -283,7 +294,6 @@ def create_task_from_objective(objective: str) -> Task:
         (r"\b(?:save\b.*?\b(?:desktop|file|disk|folder)|save\s+as|save\s+it)\b", "saving files or creating files directly on disk is not supported yet"),
         (r"\b(?:send\s+email|send\s+an\s+email|compose\s+email)\b", "sending emails is not supported yet"),
         (r"\b(?:send\s+whatsapp|message\s+on\s+whatsapp)\b", "automated WhatsApp messaging is not supported yet"),
-        (r"\b(?:click\s+(?:on\s+)?button|click\s+icon|move\s+mouse)\b", "mouse and GUI clicking automation is not supported yet"),
         (r"\b(?:dom\s+automation|inspect\s+element|read\s+browser\s+dom)\b", "browser DOM automation is not supported yet"),
     ]
     for pattern, reason in unsupported_patterns:
@@ -311,8 +321,9 @@ def create_task_from_objective(objective: str) -> Task:
 
     steps: list[TaskStep] = []
     last_launched_app: str | None = None
+    context: str | None = None
     for idx, part in enumerate(parts, start=1):
-        parsed = _parse_direct_part(part, default_window=last_launched_app)
+        parsed = _parse_direct_part(part, default_window=last_launched_app, context=context)
         if not parsed:
             task.status = TaskStatus.FAILED
             task.error = f"Could not determine valid tool step for action: '{part}'."
@@ -323,8 +334,30 @@ def create_task_from_objective(objective: str) -> Task:
         if tool_name == "launch_application" and "name" in arguments:
             last_launched_app = arguments["name"]
 
-        step_id = f"step_{idx}"
-        deps = [f"step_{idx - 1}"] if idx > 1 else []
+        if tool_name in ("search_youtube", "play_youtube"):
+            context = "youtube"
+        if tool_name == "launch_application" and "name" in arguments:
+            context = arguments["name"].lower()
+        elif tool_name == "open_website" and "url" in arguments:
+            opened_url = arguments["url"]
+            context = next(
+                (name for name, site_url in jarvis_actions.SITES.items() if site_url == opened_url),
+                None,
+            )
+            if context is None and "youtube.com" in opened_url:
+                context = "youtube"
+
+        if (
+            tool_name in ("search_youtube", "play_youtube")
+            and context == "youtube"
+            and steps
+            and steps[-1].tool_name == "open_website"
+            and steps[-1].arguments.get("url") == jarvis_actions.SITES["youtube"]
+        ):
+            steps.pop()
+
+        step_id = f"step_{len(steps) + 1}"
+        deps = [steps[-1].step_id] if steps else []
         steps.append(TaskStep(
             step_id=step_id,
             description=desc,

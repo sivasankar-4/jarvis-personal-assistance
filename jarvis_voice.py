@@ -19,6 +19,8 @@ Microphone ownership model (single consumer at a time):
 
 import atexit
 import logging
+import math
+import struct
 import os
 import queue
 import re
@@ -56,7 +58,7 @@ def _diag(msg: str) -> None:
 
 LISTEN_TIMEOUT = float(os.environ.get("JARVIS_LISTEN_TIMEOUT", "15"))
 PHRASE_TIME_LIMIT = float(os.environ.get("JARVIS_PHRASE_TIME_LIMIT", "25"))
-PAUSE_THRESHOLD = float(os.environ.get("JARVIS_PAUSE_THRESHOLD", "1.6"))
+PAUSE_THRESHOLD = float(os.environ.get("JARVIS_PAUSE_THRESHOLD", "0.8"))
 NON_SPEAKING_DURATION = float(os.environ.get("JARVIS_NON_SPEAKING_DURATION", "0.6"))
 CALIBRATE_DURATION = float(os.environ.get("JARVIS_CALIBRATE_DURATION", "1.0"))
 MAX_RECOGNITION_ATTEMPTS = int(os.environ.get("JARVIS_MAX_RECOGNITION_ATTEMPTS", "3"))
@@ -99,6 +101,11 @@ _STOP_VARIATION_PATTERNS = re.compile(
     r"^(?:(?:hey|ok|okay)\s+)?jarvis\s+(?:please\s+)?(?:top|stopp|stope)(?:\s+please)?$",
     re.IGNORECASE,
 )
+
+# Whole-word tokens that signal stop intent when they survive inside a
+# longer, messily-endpointed transcript (see the token scan in
+# classify_interruption).
+_STOP_TOKENS = frozenset({"stop", "cancel", "halt", "silence"})
 
 # Common conversational fillers, short question words, and pleasantries that should NOT interrupt TTS
 _IGNORED_FILLERS = {
@@ -187,6 +194,17 @@ def classify_interruption(transcript: str) -> tuple[str, str | None]:
     if had_wake_word and len(cmd.split()) >= 2:
         return INTERRUPT_COMMAND, command_from_transcript(cleaned)
 
+    # 5. Stop-token scan: real barge-in transcripts are merged by endpointing
+    # into messy multi-word strings ("make a stop stop"), which defeats the
+    # fully-anchored patterns above. A whole-word stop token repeated, or a
+    # single one inside a short utterance, is unambiguous stop intent.
+    # Whole-word only: "stopwatch"/"stopped" never match. This step runs
+    # after the command check, so it can only convert today's IGNOREs.
+    tokens = norm.split()
+    stop_hits = sum(1 for token in tokens if token in _STOP_TOKENS)
+    if stop_hits >= 2 or (stop_hits == 1 and len(tokens) <= 4):
+        return INTERRUPT_STOP, None
+
     # 5. Default: Unrelated speech, ambient fragments, or short noise -> IGNORE
     return INTERRUPT_IGNORE, None
 
@@ -232,9 +250,62 @@ def command_from_transcript(transcript):
     return " ".join(without_wake.split()).strip(" ,")
 
 
-def transcribe_audio(recognizer, audio):
-    text = recognizer.recognize_google(audio)
+_groq_stt_client = None
+
+
+def _stt_model() -> str:
+    return os.environ.get("JARVIS_STT_MODEL", "").strip() or "whisper-large-v3-turbo"
+
+
+def _stt_client():
+    global _groq_stt_client
+    api_key = _tts_api_key()
+    if not api_key:
+        return None
+    if _groq_stt_client is None:
+        try:
+            from openai import OpenAI
+
+            _groq_stt_client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.groq.com/openai/v1",
+                timeout=10.0,
+            )
+        except Exception:
+            return None
+    return _groq_stt_client
+
+
+def _transcribe_with_whisper(audio):
+    """Return the Whisper transcript for the captured audio.
+
+    Returns None when the Whisper engine is unavailable (no key or no
+    client) so the caller can fall back; an empty string is a real
+    result (nothing intelligible was heard). API errors raise.
+    """
+    client = _stt_client()
+    if client is None:
+        return None
+    result = client.audio.transcriptions.create(
+        model=_stt_model(),
+        file=("command.wav", audio.get_wav_data()),
+        language="en",
+        response_format="text",
+    )
+    text = result if isinstance(result, str) else getattr(result, "text", "")
     return (text or "").strip()
+
+
+def transcribe_audio(recognizer, audio):
+    try:
+        text = _transcribe_with_whisper(audio)
+    except Exception:
+        text = None
+    if text is not None:
+        return text
+    _diag("[STT]: whisper unavailable or failed; falling back to Google")
+    fallback = recognizer.recognize_google(audio)
+    return (fallback or "").strip()
 
 
 def _microphone_label(mic):
@@ -456,9 +527,18 @@ def _discard_tts_engine_worker() -> None:
             engine.stop()
         except Exception:
             pass
+        try:
+            del engine
+        except Exception:
+            pass
     try:
         import pyttsx3
         pyttsx3._activeEngines.clear()
+    except Exception:
+        pass
+    try:
+        import gc
+        gc.collect()
     except Exception:
         pass
 
@@ -884,6 +964,65 @@ def speak(text):
 # Interruptible speak used exclusively by listen_loop
 # ---------------------------------------------------------------------------
 
+def _calculate_rms(buffer, sample_width: int = 2) -> int:
+    """Calculate Root Mean Square (RMS) energy of an audio buffer."""
+    if not isinstance(buffer, (bytes, bytearray)) or len(buffer) == 0:
+        return 0
+    try:
+        import audioop
+        return audioop.rms(buffer, sample_width)
+    except Exception:
+        pass
+    if sample_width == 2:
+        num_samples = len(buffer) // 2
+        if num_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{num_samples}h", buffer[:num_samples * 2])
+        sum_sq = sum(s * s for s in samples)
+        return int(math.sqrt(sum_sq / num_samples))
+    elif sample_width == 1:
+        num_samples = len(buffer)
+        if num_samples == 0:
+            return 0
+        sum_sq = sum((b - 128) * (b - 128) for b in buffer)
+        return int(math.sqrt(sum_sq / num_samples))
+    elif sample_width == 4:
+        num_samples = len(buffer) // 4
+        if num_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{num_samples}i", buffer[:num_samples * 4])
+        sum_sq = sum(s * s for s in samples)
+        return int(math.sqrt(sum_sq / num_samples))
+    return 0
+
+
+class _EnergyTrackingStream:
+    """Pass-through wrapper around a PyAudio stream that records peak RMS energy."""
+
+    def __init__(self, stream, sample_width: int = 2):
+        self._stream = stream
+        self._sample_width = sample_width if isinstance(sample_width, int) and sample_width > 0 else 2
+        self.peak_energy = 0
+
+    def reset_peak(self) -> None:
+        self.peak_energy = 0
+
+    def read(self, *args, **kwargs):
+        data = self._stream.read(*args, **kwargs)
+        if data:
+            energy = _calculate_rms(data, self._sample_width)
+            if energy > self.peak_energy:
+                self.peak_energy = energy
+        return data
+
+    def close(self):
+        if hasattr(self._stream, "close"):
+            return self._stream.close()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def _listen_for_interrupt(interrupt_mic, session_id=None):
     """
     Poll a DEDICATED microphone (interrupt_mic) for stop phrases or new
@@ -908,19 +1047,38 @@ def _listen_for_interrupt(interrupt_mic, session_id=None):
 
     sid_prefix = f"[Session {session_id}]: " if session_id else "[Interrupt]: "
     _diag(f"{sid_prefix}Interrupt listener started")
+    rate = getattr(interrupt_mic, "SAMPLE_RATE", "unknown")
+    width = getattr(interrupt_mic, "SAMPLE_WIDTH", "unknown")
+    chunk = getattr(interrupt_mic, "CHUNK", "unknown")
+    _diag(f"{sid_prefix}Interrupt stream: rate={rate} width={width} chunk={chunk}")
     try:
         while is_tts_active() and not _stop_event.is_set():
+            peak_energy = 0
+            outcome = "error"
             try:
-                with interrupt_mic as source:
-                    try:
-                        audio = poll_recognizer.listen(
-                            source,
-                            timeout=INTERRUPT_POLL_TIMEOUT,
-                            phrase_time_limit=5.0,
-                        )
-                    except sr.WaitTimeoutError:
-                        # No speech in this window; TTS may still be running.
-                        continue
+                try:
+                    with interrupt_mic as source:
+                        src_width = getattr(source, "SAMPLE_WIDTH", 2)
+                        tracker = _EnergyTrackingStream(source.stream, sample_width=src_width)
+                        source.stream = tracker
+                        try:
+                            audio = poll_recognizer.listen(
+                                source,
+                                timeout=INTERRUPT_POLL_TIMEOUT,
+                                phrase_time_limit=5.0,
+                            )
+                            outcome = "phrase"
+                        except sr.WaitTimeoutError:
+                            outcome = "timeout"
+                            audio = None
+                        finally:
+                            peak_energy = tracker.peak_energy
+                finally:
+                    _diag(f"{sid_prefix}Interrupt cycle: peak_energy={peak_energy} outcome={outcome}")
+
+                if outcome == "timeout":
+                    continue
+
                 _diag(f"{sid_prefix}Microphone stream released")
                 try:
                     heard = (poll_recognizer.recognize_google(audio) or "").strip()
@@ -1123,6 +1281,7 @@ def listen_loop():
             follow_up_response = jarvis_brain.think(interrupted_with)
             _interruptible_speak(follow_up_response)
 
+    speak("Hi boss, welcome back. Jarvis is online and ready to assist you.")
     print("Listening...", flush=True)
     idle_cycles = 0
     while True:

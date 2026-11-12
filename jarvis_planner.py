@@ -9,6 +9,27 @@ from __future__ import annotations
 import re
 
 from jarvis_tools import execute_tool
+from jarvis_windows import ToolResult
+
+
+def grounded_click(target_desc):
+    """Locate a described element and click it, verified.
+
+    Returns the click_and_verify ToolResult on execution, the locate
+    ToolResult on locate failure, or a failure ToolResult when the
+    located point is unconfirmed. Shared by the planner's click branch
+    and the TASK-024 GUI loop so the two can never drift.
+    """
+    located = execute_tool("locate_element", {"description": target_desc, "target": "screen"})
+    if not located.ok:
+        return located
+    data = located.data or {}
+    if data.get("confirmed") is not True or "x" not in data or "y" not in data:
+        return ToolResult(False, f"I found something that might be {target_desc}, but I couldn't confirm it, so I won't click.")
+    return execute_tool(
+        "click_and_verify",
+        {"x": int(data["x"]), "y": int(data["y"]), "button": "left", "clicks": 1},
+    )
 
 
 def plan_direct_desktop_request(text: str):
@@ -29,6 +50,26 @@ def plan_direct_desktop_request(text: str):
     if switch:
         return execute_tool("send_shortcut", {"shortcut": "alt+tab"})
 
+    if lowered in {"click", "click on"}:
+        return "What would you like me to click on?"
+
+    click = re.match(r"^click\s+(?:on\s+)?(.+)$", cleaned, re.I)
+    if click:
+        target_desc = click.group(1).strip()
+        if target_desc.lower() in {"", "the"}:
+            return "What would you like me to click on?"
+        if " and " in f" {target_desc.lower()} ":
+            return None
+        result = grounded_click(target_desc)
+        if not result.ok:
+            return result
+        cdata = result.data or {}
+        if cdata.get("foreground_after") != cdata.get("foreground_before"):
+            return f"Clicked on {target_desc}. {result.message}"
+        if cdata.get("changed"):
+            return f"I clicked where I found {target_desc}, and the screen changed a little, but I can't confirm that's what you asked for."
+        return f"I clicked on {target_desc}, but no visible change was detected."
+
     type_match = re.match(r"^type\s+(.+?)\s+(?:into|in)\s+(.+)$", cleaned, re.I)
     if type_match:
         text_arg = type_match.group(1).strip().strip('"\'')
@@ -44,13 +85,16 @@ def plan_direct_desktop_request(text: str):
         return execute_tool("open_website", {"url": website.group(1)})
 
     youtube = re.match(
-        r"^(?:open|launch|start)\s+youtube(?:\s+and\s+(?:search(?:\s+for)?|type)\s+(.+))?$",
+        r"^(?:open|launch|start)\s+youtube(?:\s+and\s+(search(?:\s+for)?|type|play)\s+(.+))?$",
         cleaned,
         re.I,
     )
     if youtube:
-        query = youtube.group(1)
+        verb = youtube.group(1)
+        query = youtube.group(2)
         if query:
+            if verb and verb.lower().startswith("play"):
+                return execute_tool("play_youtube", {"query": query.strip()})
             return execute_tool("search_youtube", {"query": query.strip()})
         return execute_tool("open_website", {"url": "https://www.youtube.com"})
 
@@ -65,7 +109,7 @@ def plan_direct_desktop_request(text: str):
         target = app.group(1).strip().strip('"')
         if re.match(r"^(?:[a-zA-Z]:[\\/]|[\\/]|~[\\/])", target):
             return execute_tool("open_path", {"path": target})
-        if target.lower() in {"whatsapp", "gmail", "google", "github", "maps", "calendar", "drive"}:
+        if target.lower() in {"gmail", "google", "github", "maps", "calendar", "drive"}:
             return None
         return execute_tool("launch_application", {"name": target})
 
