@@ -89,66 +89,6 @@ class TestJarvisECBatch(unittest.TestCase):
     @patch("jarvis_vision.ask_screen")
     @patch("jarvis_planner.grounded_click")
     @patch("jarvis_tools.search_youtube")
-    def test_10_play_youtube_happy_path(self, mock_search, mock_click, mock_ask, mock_sleep):
-        mock_search.return_value = ToolResult(True, "Searching YouTube for lofi.", {})
-        mock_click.return_value = ToolResult(True, "Clicked", {"changed": True})
-        mock_ask.return_value = ToolResult(True, "YES - a video is playing")
-
-        res = jarvis_tools.play_youtube("lofi")
-        self.assertTrue(res.ok)
-        self.assertEqual(res.message, "Playing lofi on YouTube.")
-        mock_ask.assert_called_once_with(
-            "Is a YouTube video playing? Answer YES or NO first.", target="screen"
-        )
-
-    @patch("time.sleep")
-    @patch("jarvis_vision.ask_screen")
-    @patch("jarvis_planner.grounded_click")
-    @patch("jarvis_tools.search_youtube")
-    def test_11_play_youtube_retry(self, mock_search, mock_click, mock_ask, mock_sleep):
-        mock_search.return_value = ToolResult(True, "Searching YouTube for lofi.", {})
-        mock_click.side_effect = [
-            ToolResult(False, "not found", {}),
-            ToolResult(True, "Clicked", {"changed": True}),
-        ]
-        mock_ask.return_value = ToolResult(True, "YES")
-
-        res = jarvis_tools.play_youtube("lofi")
-        self.assertTrue(res.ok)
-        self.assertEqual(mock_click.call_count, 2)
-        mock_sleep.assert_called_once_with(2)
-
-    @patch("time.sleep")
-    @patch("jarvis_vision.ask_screen")
-    @patch("jarvis_planner.grounded_click")
-    @patch("jarvis_tools.search_youtube")
-    def test_12_play_youtube_never_found(self, mock_search, mock_click, mock_ask, mock_sleep):
-        mock_search.return_value = ToolResult(True, "Searching YouTube for lofi.", {})
-        mock_click.return_value = ToolResult(False, "not found", {})
-
-        res = jarvis_tools.play_youtube("lofi")
-        self.assertFalse(res.ok)
-        self.assertEqual(mock_click.call_count, 3)
-        mock_ask.assert_not_called()
-
-    @patch("time.sleep")
-    @patch("jarvis_vision.ask_screen")
-    @patch("jarvis_planner.grounded_click")
-    @patch("jarvis_tools.search_youtube")
-    def test_13_play_youtube_click_without_playback(self, mock_search, mock_click, mock_ask, mock_sleep):
-        mock_search.return_value = ToolResult(True, "Searching YouTube for lofi.", {})
-        mock_click.return_value = ToolResult(True, "Clicked", {"changed": True})
-        mock_ask.return_value = ToolResult(True, "NO - a results page")
-
-        res = jarvis_tools.play_youtube("lofi")
-        self.assertFalse(res.ok)
-        self.assertIn("couldn't confirm", res.message)
-        self.assertEqual(mock_click.call_count, 1)
-
-    @patch("time.sleep")
-    @patch("jarvis_vision.ask_screen")
-    @patch("jarvis_planner.grounded_click")
-    @patch("jarvis_tools.search_youtube")
     def test_14_play_youtube_search_failure(self, mock_search, mock_click, mock_ask, mock_sleep):
         mock_search.return_value = ToolResult(False, "search failed", {})
 

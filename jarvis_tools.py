@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.parse
+import urllib.request
 
 import jarvis_policy
 import jarvis_routines
@@ -486,39 +488,109 @@ def search_web(query: str) -> jarvis_windows.ToolResult:
     return result
 
 
+def _first_youtube_video(query: str) -> dict | None:
+    if not isinstance(query, str) or not query.strip():
+        return None
+    try:
+        safe_query = query.strip()
+        url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(safe_query)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+        if not raw:
+            return None
+        text = raw.decode("utf-8", errors="replace")
+        marker = "ytInitialData = "
+        idx = text.find(marker)
+        if idx == -1:
+            return None
+        decoder = json.JSONDecoder()
+        data, _ = decoder.raw_decode(text[idx + len(marker):])
+
+        def _walk(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k == "videoRenderer" and isinstance(v, dict):
+                        yield v
+                    yield from _walk(v)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from _walk(item)
+
+        for vr in _walk(data):
+            vid = vr.get("videoId")
+            if isinstance(vid, str) and re.match(r"^[A-Za-z0-9_-]{11}$", vid):
+                title = ""
+                t_obj = vr.get("title")
+                if isinstance(t_obj, dict):
+                    runs = t_obj.get("runs")
+                    if isinstance(runs, list) and runs and isinstance(runs[0], dict):
+                        title = str(runs[0].get("text") or "")
+                    elif "simpleText" in t_obj:
+                        title = str(t_obj.get("simpleText") or "")
+                return {
+                    "video_id": vid,
+                    "title": title,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                }
+        return None
+    except Exception:
+        return None
+
+
 def play_youtube(query: str) -> jarvis_windows.ToolResult:
     if not isinstance(query, str) or not query.strip():
         return jarvis_windows.ToolResult(False, "Please say what you want to play on YouTube.")
     safe_query = query.strip()
-    search_result = search_youtube(safe_query)
-    if not search_result.ok:
-        return search_result
-    from jarvis_planner import grounded_click
-    click_result = None
-    for attempt in range(3):
-        if attempt:
-            time.sleep(2)
-        click_result = grounded_click("first video result on YouTube")
-        if "changed" in (click_result.data or {}):
+    video = _first_youtube_video(safe_query)
+    if video is None:
+        r = search_youtube(safe_query)
+        if not r.ok:
+            return r
+        return jarvis_windows.ToolResult(
+            False,
+            f"I couldn't find a video for {safe_query} on YouTube, so I opened the results instead.",
+            {"reason": "no_video_id"},
+        )
+    opened = jarvis_windows.open_website(video["url"])
+    if not opened.ok:
+        return opened
+    time.sleep(5)
+    confirmed = False
+    for attempt in range(2):
+        if attempt > 0:
+            time.sleep(4)
+        answer = jarvis_vision.ask_screen(
+            "Is a YouTube video playing? Answer YES or NO first.", target="screen"
+        )
+        if answer.ok and (answer.message or "").strip().upper().startswith("YES"):
+            confirmed = True
             break
-    if click_result is None or "changed" not in (click_result.data or {}):
+    title = video["title"]
+    if confirmed:
         return jarvis_windows.ToolResult(
-            False,
-            f"I searched YouTube for {safe_query}, but I couldn't find a video result to click.",
+            True,
+            f"Playing {safe_query} on YouTube.",
+            {
+                "query": safe_query,
+                "video_id": video["video_id"],
+                "title": title,
+                "url": video["url"],
+            },
         )
-    if not click_result.ok:
-        return jarvis_windows.ToolResult(
-            False,
-            f"I clicked the first result for {safe_query}, but the click could not be verified.",
-        )
-    answer = jarvis_vision.ask_screen(
-        "Is a YouTube video playing? Answer YES or NO first.", target="screen"
-    )
-    if answer.ok and (answer.message or "").strip().upper().startswith("YES"):
-        return jarvis_windows.ToolResult(True, f"Playing {safe_query} on YouTube.", {"query": safe_query})
     return jarvis_windows.ToolResult(
         False,
-        f"I clicked the first result for {safe_query}, but I couldn't confirm a video is playing.",
+        f"I opened the video for {safe_query} but couldn't confirm it is playing.",
+        {
+            "reason": "unconfirmed",
+            "video_id": video["video_id"],
+            "title": title,
+            "url": video["url"],
+        },
     )
 
 
